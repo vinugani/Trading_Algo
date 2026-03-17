@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "delta-exchange-trading-bot"
+version = "0.1.0"
+description = "Production-ready crypto trading bot for Delta Exchange API"
+authors = ["your-name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "delta_exchange_bot", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+requests = "^2.31"
+websocket-client = "^1.6"
+pydantic = "^2.8"
+pydantic-settings = "^2.8"
+tenacity = "^8.2"
+structlog = "^23.3"
+loguru = "^0.7"
+psycopg = {version = "^3.1", extras = ["binary"]}
+pandas = "^3.0.1"
+prometheus-client = "^0.24.1"
+pyyaml = "^6.0.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0"
+pytest-mock = "^3.11"
+black = "^24.1"
+ruff = "^0.1"
+
+[build-system]
+requires = ["poetry-core>=1.6.0"]
+build-backend = "poetry.core.masonry.api"

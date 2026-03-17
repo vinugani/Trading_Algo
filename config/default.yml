@@ -1,0 +1,14 @@
+app:
+  mode: paper
+  exchange_env: testnet-india
+  base_currency: USDT
+  order_size: 100
+  max_positions: 5
+  trade_frequency_s: 5
+
+delta:
+  api_url: "https://cdn-ind.testnet.deltaex.org"
+  api_key: ""
+  api_secret: ""
+  ws_url: "wss://cdn-ind.testnet.deltaex.org/socket.io/"
+  enable_risk: true

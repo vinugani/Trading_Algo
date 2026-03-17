@@ -1,0 +1,4 @@
+app:
+  mode: live
+  dry_run: false
+  max_drawdown_pct: 0.08

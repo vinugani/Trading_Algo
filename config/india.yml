@@ -1,0 +1,14 @@
+app:
+  mode: live
+  exchange_env: prod-india
+  base_currency: USDT
+  order_size: 100
+  max_positions: 5
+  trade_frequency_s: 5
+
+delta:
+  api_url: "https://api.india.delta.exchange"
+  api_key: ""
+  api_secret: ""
+  ws_url: "wss://api.india.delta.exchange/socket.io/"
+  enable_risk: true

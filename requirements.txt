@@ -1,0 +1,11 @@
+requests>=2.31,<3
+websocket-client>=1.6,<2
+pydantic>=2.8,<3
+pydantic-settings>=2.8,<3
+tenacity>=8.2,<9
+structlog>=23.3,<24
+loguru>=0.7,<1
+psycopg[binary]>=3.1,<4
+pandas>=3.0.1,<4
+prometheus-client>=0.24.1,<1
+PyYAML>=6.0,<7
