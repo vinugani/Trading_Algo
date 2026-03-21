@@ -13,3 +13,4 @@ __pypackages__/
 logs/
 keys.txt
 *.pem
+errors1.txt
