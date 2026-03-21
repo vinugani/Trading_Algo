@@ -1,0 +1,31 @@
+python scripts/analyze_paper_trades.py --help
+
+
+python scripts/analyze_paper_trades.py --mode paper --lookback-days 7
+python scripts/analyze_paper_trades.py --mode paper --lookback-days 0 --initial-equity 100000
+python scripts/analyze_paper_trades.py --db-path state.db --mode live
+
+python scripts/run_bot.py --mode paper --strategy portfolio --cycles 10
+Live run: python scripts/run_bot.py --mode live --strategy portfolio
+
+This python module givem the data from the state.db
+python - << 'PY'
+import sqlite3
+conn = sqlite3.connect("state.db")
+cur = conn.cursor()
+
+print("\nACTIVE PAPER POSITIONS")
+for r in cur.execute("SELECT symbol,trade_id,side,size,entry_price,stop_loss,take_profit FROM open_position_state WHERE mode='live'"):
+    print(r)
+
+print("\nRECENT PAPER EXECUTIONS")
+for r in cur.execute("""
+SELECT trade_id,event_type,symbol,side,size,price,status,reason,ts
+FROM execution_logs
+WHERE mode='paper'
+ORDER BY id DESC
+LIMIT 20
+"""):
+    print(r)
+conn.close()
+PY

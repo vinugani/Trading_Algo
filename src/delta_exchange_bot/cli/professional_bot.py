@@ -29,11 +29,12 @@ from delta_exchange_bot.risk.advanced_risk_manager import AdvancedRiskConfig
 from delta_exchange_bot.risk.advanced_risk_manager import AdvancedRiskManager
 from delta_exchange_bot.risk.risk_management import calculate_position_size
 from delta_exchange_bot.risk.risk_management import validate_trade
-from delta_exchange_bot.strategies.manager import StrategyManager
+from delta_exchange_bot.strategy.manager import StrategyManager
 from delta_exchange_bot.strategy.base import Signal
 from delta_exchange_bot.strategy.ema_crossover import EMACrossoverStrategy
 from delta_exchange_bot.strategy.momentum import MomentumStrategy
 from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy
+from delta_exchange_bot.strategy.portfolio import PortfolioStrategy
 from delta_exchange_bot.utils.logging import configure_logging
 
 try:
@@ -140,6 +141,8 @@ class ProfessionalTradingBot:
             return RSIScalpingStrategy()
         if normalized == "ema_crossover":
             return EMACrossoverStrategy()
+        if normalized == "portfolio":
+            return PortfolioStrategy()
         return RSIScalpingStrategy()
 
     def _load_open_positions_from_db(self) -> None:

@@ -11,6 +11,7 @@ from delta_exchange_bot.persistence.db import StateDB
 from delta_exchange_bot.strategy.ema_crossover import EMACrossoverStrategy
 from delta_exchange_bot.strategy.momentum import MomentumStrategy
 from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy
+from delta_exchange_bot.strategy.portfolio import PortfolioStrategy
 from delta_exchange_bot.strategy.base import Signal
 from delta_exchange_bot.core.settings import Settings
 
@@ -39,6 +40,8 @@ class TradingEngine:
             return RSIScalpingStrategy()
         if normalized == "ema_crossover":
             return EMACrossoverStrategy()
+        if normalized == "portfolio":
+            return PortfolioStrategy()
         raise ValueError(f"Unsupported strategy_name={strategy_name}")
 
     @staticmethod

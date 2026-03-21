@@ -1,6 +1,6 @@
 import pandas as pd
 
-from delta_exchange_bot.strategies.manager import StrategyManager
+from delta_exchange_bot.strategy.manager import StrategyManager
 from delta_exchange_bot.strategy.market_regime import MarketRegime
 from delta_exchange_bot.strategy.market_regime import MarketRegimeSnapshot
 

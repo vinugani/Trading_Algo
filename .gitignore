@@ -5,9 +5,11 @@ dist/
 build/
 .env.*
 .venv
+.env
 *.sqlite3
 __pypackages__/
 .DS_Store
 .log
 logs/
 keys.txt
+*.pem
