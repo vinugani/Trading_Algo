@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     max_positions: int = 5
     trade_frequency_s: int = 60
     api_url: str = Field("https://api.india.delta.exchange", description="API base URL")
-    ws_url: str = Field("wss://api.india.delta.exchange/socket.io/", description="WebSocket base URL")
+    ws_url: str = Field("wss://socket.india.delta.exchange", description="WebSocket base URL")
     base_url: str | None = Field(
         None,
         description="Optional API base URL override (DELTA_BASE_URL)",
@@ -83,10 +83,10 @@ class Settings(BaseSettings):
         super().__init__(**data)
         if self.exchange_env == "prod-india":
             self.api_url = "https://api.india.delta.exchange"
-            self.ws_url = "wss://api.india.delta.exchange/socket.io/"
+            self.ws_url = "wss://socket.india.delta.exchange"
         elif self.exchange_env == "testnet-india":
             self.api_url = "https://cdn-ind.testnet.deltaex.org"
-            self.ws_url = "wss://cdn-ind.testnet.deltaex.org/socket.io/"
+            self.ws_url = "wss://testnet-socket.india.delta.exchange"
         else:
             raise ValueError(f"Unsupported exchange_env={self.exchange_env}")
 
