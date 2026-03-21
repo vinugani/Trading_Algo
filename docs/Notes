@@ -1,0 +1,77 @@
+Poetry installation
+in linux install python 3.12 version atleast
+dnf install python3.12 -y
+and make the alies as python
+
+installing poetry 
+curl -sSL https://install.python-poetry.org | python -
+
+now clone the repo and run the poetry install
+if poetry install takes the old version of python 
+the execute the below commands
+
+$ which python  # This will gives the latest python version which we are created as alias
+the outpur which like            
+/usr/bin/python3.12
+
+poetry env use /usr/bin/python3.12
+poetry install
+
+somethimes poetry lock issues are happend
+in that cases
+poetry lock
+poetry install
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+python scripts/analyze_paper_trades.py --mode paper --lookback-days 7
+python scripts/analyze_paper_trades.py --mode paper --lookback-days 0 --initial-equity 100000
+python scripts/analyze_paper_trades.py --db-path state.db --mode live
+
+python scripts/run_bot.py --mode paper --strategy portfolio --cycles 10
+Live run: python scripts/run_bot.py --mode live --strategy portfolio
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+cd /opt/Trading_Algo
+poetry run python -c "
+import sqlite3, os
+db = sqlite3.connect('state.db')
+
+print('=== TRADES ===')
+trades = db.execute('SELECT id, symbol, side, size, price, ts FROM trades ORDER BY ts DESC LIMIT 10').fetchall()
+if trades:
+    for t in trades:
+        print(f'  {t[5]} | {t[1]} | {t[2].upper()} | size={t[3]:.4f} | price={t[4]}')
+else:
+    print('  No trades yet')
+
+print('')
+print('=== SIGNALS ===')
+sigs = db.execute('SELECT symbol, action, confidence, price, ts FROM signals ORDER BY ts DESC LIMIT 10').fetchall()
+if sigs:
+    for s in sigs:
+        print(f'  {s[4]} | {s[0]} | {s[1].upper()} | confidence={s[2]:.2f} | price={s[3]}')
+else:
+    print('  No signals yet')
+
+print('')
+print('=== OPEN POSITIONS ===')
+pos = db.execute('SELECT symbol, side, size, entry_price FROM open_position_state').fetchall()
+if pos:
+    for p in pos:
+        print(f'  {p[0]} | {p[1].upper()} | size={p[2]:.4f} | entry={p[3]}')
+else:
+    print('  No open positions')
+
+db.close()
+"
+
+If you want to confirm the bot is alive, run this in a second PowerShell window while the bot is running:
+
+poetry run python -c "
+import sqlite3, time
+db = sqlite3.connect('state.db')
+count = db.execute('SELECT COUNT(*) FROM trades').fetchone()[0]
+print(f'Total paper trades so far: {count}')
+db.close()
+"

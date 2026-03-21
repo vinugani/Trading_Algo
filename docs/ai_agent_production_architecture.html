@@ -1,0 +1,401 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans, sans-serif); color: var(--color-text-primary); }
+.arch { padding: 0; }
+.layer { border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 12px 14px; margin-bottom: 10px; position: relative; }
+.layer-title { font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.boxes { display: flex; flex-wrap: wrap; gap: 8px; }
+.box { border: 0.5px solid; border-radius: 6px; padding: 7px 10px; font-size: 12px; flex: 1; min-width: 130px; max-width: 200px; cursor: pointer; transition: opacity 0.15s; }
+.box:hover { opacity: 0.8; }
+.box-title { font-weight: 500; font-size: 12px; margin-bottom: 2px; }
+.box-sub { font-size: 11px; opacity: 0.75; }
+.arrow-row { text-align: center; font-size: 13px; color: var(--color-text-tertiary); margin: 4px 0; user-select: none; }
+.new-badge { font-size: 9px; background: var(--color-background-success); color: var(--color-text-success); border: 0.5px solid var(--color-border-success, rgba(0,120,0,.25)); padding: 1px 5px; border-radius: 3px; margin-left: 5px; vertical-align: middle; }
+.fix-badge { font-size: 9px; background: var(--color-background-warning); color: var(--color-text-warning); border: 0.5px solid var(--color-border-warning, rgba(140,70,0,.25)); padding: 1px 5px; border-radius: 3px; margin-left: 5px; vertical-align: middle; }
+
+/* color themes per layer */
+.l-blue { background: var(--color-background-info); border-color: var(--color-border-info, rgba(0,90,200,.25)) !important; }
+.l-blue .layer-title { color: var(--color-text-info); }
+.b-blue { background: var(--color-background-info); border-color: var(--color-border-info, rgba(0,90,200,.3)) !important; color: var(--color-text-info); }
+
+.l-purple { background: rgba(100,70,200,.07); border-color: rgba(100,70,200,.25) !important; }
+.l-purple .layer-title { color: #7c6be8; }
+.b-purple { background: rgba(100,70,200,.09); border-color: rgba(100,70,200,.3) !important; color: #7c6be8; }
+
+.l-green { background: var(--color-background-success); border-color: var(--color-border-success, rgba(0,130,0,.25)) !important; }
+.l-green .layer-title { color: var(--color-text-success); }
+.b-green { background: var(--color-background-success); border-color: var(--color-border-success, rgba(0,130,0,.3)) !important; color: var(--color-text-success); }
+
+.l-amber { background: var(--color-background-warning); border-color: var(--color-border-warning, rgba(150,90,0,.25)) !important; }
+.l-amber .layer-title { color: var(--color-text-warning); }
+.b-amber { background: var(--color-background-warning); border-color: var(--color-border-warning, rgba(150,90,0,.3)) !important; color: var(--color-text-warning); }
+
+.l-red { background: var(--color-background-danger); border-color: var(--color-border-danger, rgba(180,0,0,.25)) !important; }
+.l-red .layer-title { color: var(--color-text-danger); }
+.b-red { background: var(--color-background-danger); border-color: var(--color-border-danger, rgba(180,0,0,.3)) !important; color: var(--color-text-danger); }
+
+.l-gray { background: var(--color-background-secondary); border-color: var(--color-border-secondary, rgba(0,0,0,.12)) !important; }
+.l-gray .layer-title { color: var(--color-text-secondary); }
+.b-gray { background: var(--color-background-secondary); border-color: var(--color-border-secondary) !important; color: var(--color-text-secondary); }
+
+.detail { display: none; font-size: 11px; color: var(--color-text-secondary); margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--color-border-tertiary); line-height: 1.6; }
+.detail.open { display: block; }
+.show-btn { font-size: 11px; color: var(--color-text-info); cursor: pointer; margin-top: 6px; display: inline-block; }
+</style>
+
+<div class="arch">
+
+  <!-- AI AGENT LAYER -->
+  <div class="layer l-purple">
+    <div class="layer-title"><span class="dot" style="background:#7c6be8"></span>AI Agent Orchestration Layer <span class="new-badge">NEW</span></div>
+    <div class="boxes">
+      <div class="box b-purple" onclick="toggle(this)">
+        <div class="box-title">Code Audit Agent</div>
+        <div class="box-sub">OpenClaw / GPT-4o-mini</div>
+        <div class="detail">
+          Runs on every PR/commit via GitHub Action. Uses Claude/GPT to:<br>
+          • Static analysis: dead code, unused imports, type hint gaps<br>
+          • Risk logic review: detects hardcoded thresholds, missing guards<br>
+          • Security scan: secret detection, OWASP top-10 check<br>
+          • Diff-aware commentary posted as PR review<br>
+          Tool: OpenClaw CLI or LangChain + pylint + bandit
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-purple" onclick="toggle(this)">
+        <div class="box-title">Log Audit Agent</div>
+        <div class="box-sub">LangGraph / CrewAI</div>
+        <div class="detail">
+          Runs on a 5-min cron, reads structured JSON logs from stdout.<br>
+          • Detects anomalous patterns: repeated POSITION_MISMATCH, circuit-breaker spikes<br>
+          • Summarises last N hours in natural language<br>
+          • Alerts to Slack/Telegram on critical events<br>
+          • Maintains rolling incident digest in Notion/Confluence<br>
+          Tool: LangGraph node reading log stream → LLM → Slack webhook
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-purple" onclick="toggle(this)">
+        <div class="box-title">Strategy Performance Agent</div>
+        <div class="box-sub">CrewAI multi-agent</div>
+        <div class="detail">
+          Daily job reading from state.db performance_metrics table.<br>
+          • Computes per-strategy Sharpe, win-rate, max-DD<br>
+          • Compares paper vs live divergence<br>
+          • Suggests parameter tweaks using LLM reasoning over backtests<br>
+          • Generates HTML report sent to email<br>
+          Tool: CrewAI orchestrating data agent + analyst agent + report agent
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-purple" onclick="toggle(this)">
+        <div class="box-title">Risk Anomaly Agent</div>
+        <div class="box-sub">Autogen / LangGraph</div>
+        <div class="detail">
+          Real-time agent connected to Prometheus metrics via API.<br>
+          • Polls drawdown, win_rate, api_errors every 30s<br>
+          • LLM evaluates metric combination for systemic risk patterns<br>
+          • Can call emergency_exit.py via subprocess tool if conditions met<br>
+          • Sends structured incident report with root-cause hypothesis<br>
+          Tool: Autogen agent with tool-use (prometheus_client, subprocess)
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-purple" onclick="toggle(this)">
+        <div class="box-title">Market Research Agent</div>
+        <div class="box-sub">Perplexity / Tavily</div>
+        <div class="detail">
+          Pre-market briefing agent (runs 30 min before market open).<br>
+          • Scrapes crypto news, macro events, exchange announcements<br>
+          • Summarises market sentiment for each traded symbol<br>
+          • Adjusts risk parameters via config-update tool if high-risk events detected<br>
+          • Posts morning briefing to Slack channel<br>
+          Tool: Tavily search API → LLM summariser → config writer
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-purple" onclick="toggle(this)">
+        <div class="box-title">Test Generation Agent</div>
+        <div class="box-sub">Claude / Codegen</div>
+        <div class="detail">
+          On PR open: analyses changed modules, auto-generates missing unit tests.<br>
+          • Targets uncovered edge cases: zero size, negative equity, API timeouts<br>
+          • Submits generated tests as a follow-up PR<br>
+          • Tracks coverage delta and blocks merge if coverage drops<br>
+          Tool: Claude API + coverage.py XML → test file generator
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">↕ events, metrics, alerts, commands ↕</div>
+
+  <!-- SECURITY & SECRETS -->
+  <div class="layer l-red">
+    <div class="layer-title"><span class="dot" style="background:#A32D2D"></span>Security Layer <span class="fix-badge">FIX FIRST</span></div>
+    <div class="boxes">
+      <div class="box b-red" onclick="toggle(this)">
+        <div class="box-title">Secrets Management</div>
+        <div class="box-sub">HashiCorp Vault / AWS Secrets Manager</div>
+        <div class="detail">
+          Replace .env file approach entirely.<br>
+          • Vault dynamic secrets: rotate API keys on TTL<br>
+          • Bot fetches secret at startup, never stores to disk<br>
+          • Audit log of every secret access<br>
+          • git-secrets pre-commit hook to prevent future leaks<br>
+          Immediate: rotate committed Delta Exchange keys NOW.
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-red" onclick="toggle(this)">
+        <div class="box-title">API IP Whitelisting</div>
+        <div class="box-sub">Delta Exchange restriction</div>
+        <div class="detail">
+          Enable IP restriction on Delta Exchange API keys.<br>
+          • Only allow requests from your deployment server IP<br>
+          • Use Elastic IP or static IP for cloud deployments<br>
+          • Rotate keys after every environment change
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-red" onclick="toggle(this)">
+        <div class="box-title">Network Security</div>
+        <div class="box-sub">VPC / Security Groups</div>
+        <div class="detail">
+          • Deploy bot in private subnet, only outbound to Delta Exchange IPs<br>
+          • Prometheus/Grafana in internal network only, not public internet<br>
+          • mTLS between bot and monitoring stack<br>
+          • WAF in front of any web-facing endpoints
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">↕</div>
+
+  <!-- CI/CD LAYER -->
+  <div class="layer l-blue">
+    <div class="layer-title"><span class="dot" style="background:#185FA5"></span>CI/CD Pipeline <span class="new-badge">NEW</span></div>
+    <div class="boxes">
+      <div class="box b-blue" onclick="toggle(this)">
+        <div class="box-title">GitHub Actions</div>
+        <div class="box-sub">Lint → Test → Build → Deploy</div>
+        <div class="detail">
+          Workflow triggers: push to main, PR open, nightly schedule.<br>
+          Steps: ruff lint → mypy type check → pytest (coverage ≥ 80%) → docker build → push to ECR/GHCR → deploy to staging → smoke test → promote to prod<br>
+          Secrets stored in GitHub Actions secrets (not .env)
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-blue" onclick="toggle(this)">
+        <div class="box-title">Pre-commit Hooks</div>
+        <div class="box-sub">git-secrets, ruff, mypy, bandit</div>
+        <div class="detail">
+          • git-secrets: blocks commits containing API keys / secrets<br>
+          • ruff: auto-format and lint on every commit<br>
+          • mypy: type check on changed files<br>
+          • bandit: SAST security scan<br>
+          • Custom hook: run live_preflight.py before any live-mode deploy
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-blue" onclick="toggle(this)">
+        <div class="box-title">Deployment Strategy</div>
+        <div class="box-sub">Blue/Green + canary</div>
+        <div class="detail">
+          • Blue/Green: run new version in paper mode alongside live version<br>
+          • Compare paper PnL divergence vs live for 1h before promotion<br>
+          • If divergence > threshold, abort deployment automatically<br>
+          • Rollback in &lt; 60 seconds via container swap
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-blue" onclick="toggle(this)">
+        <div class="box-title">Fix Docker Base Image</div>
+        <div class="box-sub">python:3.12-slim</div>
+        <div class="detail">
+          Currently: FROM python:3.11-slim (mismatches pyproject.toml ^3.12)<br>
+          Fix: FROM python:3.12-slim<br>
+          Also: multi-stage build — builder stage installs deps, final stage copies only /app. Reduces image from ~800MB to ~200MB.<br>
+          Pin digest SHA for reproducibility.
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">↕</div>
+
+  <!-- CORE BOT IMPROVEMENTS -->
+  <div class="layer l-green">
+    <div class="layer-title"><span class="dot" style="background:#3B6D11"></span>Core Bot Improvements <span class="fix-badge">CRITICAL</span></div>
+    <div class="boxes">
+      <div class="box b-green" onclick="toggle(this)">
+        <div class="box-title">Exchange-Native Stop Orders</div>
+        <div class="box-sub">Replace in-process protection</div>
+        <div class="detail">
+          Current: stops/TPs managed in Python memory — lost on crash.<br>
+          Fix: place stop-limit orders on Delta Exchange after every entry.<br>
+          • POST /v2/orders with order_type="stop_limit_order"<br>
+          • Track exchange stop order IDs in open_position_state<br>
+          • Cancel exchange stops on strategy exit signal<br>
+          • Keep in-process as secondary fallback only
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-green" onclick="toggle(this)">
+        <div class="box-title">Async Database Layer</div>
+        <div class="box-sub">aiosqlite or PostgreSQL + asyncpg</div>
+        <div class="detail">
+          Current: sqlite3 (sync blocking) inside async event loop.<br>
+          Fix option A: aiosqlite wrapper for zero-migration SQLite async.<br>
+          Fix option B: wire the declared PostgreSQL → asyncpg for true async, horizontal scale.<br>
+          All StateDB methods become async. Use connection pool (min=2, max=10).
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-green" onclick="toggle(this)">
+        <div class="box-title">Redis Caching Layer</div>
+        <div class="box-sub">Wire declared Redis DSN</div>
+        <div class="detail">
+          Redis is running in compose but nothing writes to it.<br>
+          Use cases to wire:<br>
+          • Price cache (replaces in-memory dict, survives restart)<br>
+          • Rate-limit counter shared across processes<br>
+          • Distributed lock for position sync (prevents race on multi-process)<br>
+          • Session/signal deduplication key-store
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-green" onclick="toggle(this)">
+        <div class="box-title">Structured Config Loader</div>
+        <div class="box-sub">Wire YAML overlays to Settings</div>
+        <div class="detail">
+          YAML files exist but are never loaded.<br>
+          Fix: add dynaconf or custom loader in Settings.__init__:<br>
+          1. Load config/{DELTA_EXCHANGE_ENV}.yml<br>
+          2. Merge with environment variables (env vars win)<br>
+          3. Validate combined result with pydantic<br>
+          Enables per-env tuning without re-deploying
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-green" onclick="toggle(this)">
+        <div class="box-title">Unified Strategy Package</div>
+        <div class="box-sub">Merge strategy/ + strategies/</div>
+        <div class="detail">
+          Current: two RSIScalping classes across strategy/ and strategies/.<br>
+          Fix: deprecate strategy/ legacy package entirely.<br>
+          Migrate TradingEngine and all tests to use CandleStrategy ABC.<br>
+          BacktestEngine: refactor to accept CandleStrategy instead of legacy Strategy.
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-green" onclick="toggle(this)">
+        <div class="box-title">Rate Limit Budget Tracker</div>
+        <div class="box-sub">Token bucket per endpoint</div>
+        <div class="detail">
+          Current: only per-request throttle (50ms) with 429 retry.<br>
+          Fix: implement token bucket algorithm per endpoint group.<br>
+          • /v2/orders: 30 req/s bucket<br>
+          • /v2/positions: 10 req/s bucket<br>
+          • /v2/history/candles: 5 req/s bucket<br>
+          Prevents 429 bursts before they happen. Track budget in Redis.
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">↕</div>
+
+  <!-- OBSERVABILITY UPGRADES -->
+  <div class="layer l-amber">
+    <div class="layer-title"><span class="dot" style="background:#BA7517"></span>Observability Upgrades <span class="new-badge">NEW</span></div>
+    <div class="boxes">
+      <div class="box b-amber" onclick="toggle(this)">
+        <div class="box-title">Grafana Dashboards</div>
+        <div class="box-sub">5 production dashboards</div>
+        <div class="detail">
+          Dashboard 1: Trading overview — PnL, win rate, drawdown, position heatmap<br>
+          Dashboard 2: Risk monitor — leverage gauge, daily-loss %, kill-switch status<br>
+          Dashboard 3: API health — latency p50/p95/p99, error rate per endpoint<br>
+          Dashboard 4: Strategy breakdown — per-strategy PnL bar chart, regime distribution<br>
+          Dashboard 5: Infrastructure — CPU, memory, GC pause time, event loop lag
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-amber" onclick="toggle(this)">
+        <div class="box-title">Alerting Rules</div>
+        <div class="box-sub">Prometheus Alertmanager</div>
+        <div class="detail">
+          • drawdown &gt; 3% for 5 min → WARNING<br>
+          • drawdown &gt; 4.5% → CRITICAL + page<br>
+          • api_errors rate &gt; 5/min → WARNING<br>
+          • trade_count unchanged for &gt; 2 cycles → STALL alert<br>
+          • position_mismatch logged → IMMEDIATE page<br>
+          • WebSocket reconnect &gt; 3× in 10 min → WARNING<br>
+          Routes: Slack (warning), PagerDuty (critical), Telegram (all)
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-amber" onclick="toggle(this)">
+        <div class="box-title">Distributed Tracing</div>
+        <div class="box-sub">OpenTelemetry + Jaeger</div>
+        <div class="detail">
+          Add OTEL spans to:<br>
+          • DeltaClient._request() → trace every API call with endpoint + latency<br>
+          • process_symbol() → full per-symbol cycle trace<br>
+          • execute_order() → entry order sub-spans<br>
+          • Risk validation → add span attributes for rejected reason<br>
+          Correlate trade_id across all logs, spans, and DB rows
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+      <div class="box b-amber" onclick="toggle(this)">
+        <div class="box-title">Log Aggregation</div>
+        <div class="box-sub">Loki + structured JSON</div>
+        <div class="detail">
+          Current: JSON logs to stdout (good), but no centralised store.<br>
+          Fix: add Grafana Loki to docker-compose.<br>
+          • Promtail sidecar ships logs to Loki<br>
+          • Loki query in Grafana alongside metrics<br>
+          • Log retention policy: 30 days raw, 1 year aggregated<br>
+          • Add trade_id as a log label for correlation
+        </div>
+        <div class="show-btn">+ expand</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">↕</div>
+
+  <!-- EXISTING CORE (unchanged) -->
+  <div class="layer l-gray">
+    <div class="layer-title"><span class="dot" style="background:var(--color-text-secondary)"></span>Existing Core (keep + harden)</div>
+    <div class="boxes">
+      <div class="box b-gray"><div class="box-title">DeltaClient (REST + WS)</div><div class="box-sub">HMAC auth, rate throttle, products cache</div></div>
+      <div class="box b-gray"><div class="box-title">ProfessionalTradingBot</div><div class="box-sub">Async orchestrator, position sync</div></div>
+      <div class="box b-gray"><div class="box-title">StrategyManager</div><div class="box-sub">Regime-aware dispatch</div></div>
+      <div class="box b-gray"><div class="box-title">AdvancedRiskManager</div><div class="box-sub">ATR sizing, kill-switch</div></div>
+      <div class="box b-gray"><div class="box-title">OrderExecutionEngine</div><div class="box-sub">Smart routing, chunked fills</div></div>
+      <div class="box b-gray"><div class="box-title">StateDB (SQLite)</div><div class="box-sub">7-table schema → upgrade to async</div></div>
+      <div class="box b-gray"><div class="box-title">PrometheusExporter</div><div class="box-sub">8 metrics → add 12 more</div></div>
+      <div class="box b-gray"><div class="box-title">BacktestEngine</div><div class="box-sub">Refactor to CandleStrategy</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggle(box) {
+  const d = box.querySelector('.detail');
+  const btn = box.querySelector('.show-btn');
+  if (!d) return;
+  d.classList.toggle('open');
+  btn.textContent = d.classList.contains('open') ? '− collapse' : '+ expand';
+}
+</script>

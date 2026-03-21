@@ -1,0 +1,381 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans,sans-serif);color:var(--color-text-primary);font-size:13px;line-height:1.5}
+.tab-bar{display:flex;gap:4px;margin-bottom:16px;border-bottom:0.5px solid var(--color-border-tertiary);padding-bottom:0}
+.tab{padding:8px 14px;font-size:12px;font-weight:500;cursor:pointer;border-radius:6px 6px 0 0;color:var(--color-text-secondary);border:0.5px solid transparent;border-bottom:none;margin-bottom:-1px}
+.tab.active{color:var(--color-text-info);border-color:var(--color-border-tertiary);background:var(--color-background-primary);border-bottom:1px solid var(--color-background-primary)}
+.tab-content{display:none}.tab-content.active{display:block}
+.phase{border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);margin-bottom:12px;overflow:hidden}
+.phase-header{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--color-background-secondary)}
+.phase-num{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;flex-shrink:0}
+.phase-title{font-size:13px;font-weight:500;flex:1}
+.phase-days{font-size:11px;padding:2px 10px;border-radius:10px}
+.phase-body{padding:12px 14px}
+.task-row{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.task-row:last-child{border-bottom:none}
+.task-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:5px}
+.task-name{font-size:12px;font-weight:500;margin-bottom:1px}
+.task-desc{font-size:11px;color:var(--color-text-secondary)}
+.task-days{font-size:11px;color:var(--color-text-tertiary);white-space:nowrap;margin-left:auto;padding-left:8px}
+.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:16px}
+.metric{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px}
+.metric-val{font-size:20px;font-weight:500}
+.metric-label{font-size:11px;color:var(--color-text-secondary);margin-top:2px}
+.strat-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);margin-bottom:10px;overflow:hidden}
+.strat-header{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer}
+.strat-header:hover{background:var(--color-background-secondary)}
+.strat-name{font-size:13px;font-weight:500;flex:1}
+.strat-badge{font-size:11px;padding:2px 8px;border-radius:4px;white-space:nowrap}
+.strat-body{padding:12px 14px;border-top:0.5px solid var(--color-border-tertiary);display:none}
+.strat-body.open{display:block}
+.stars{display:flex;gap:2px;margin-left:4px}
+.star{width:10px;height:10px;border-radius:50%}
+.info-row{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.pill{font-size:11px;padding:2px 8px;border-radius:10px;background:var(--color-background-secondary);color:var(--color-text-secondary);border:0.5px solid var(--color-border-tertiary)}
+.highlight{background:var(--color-background-success);border:0.5px solid var(--color-border-success,rgba(0,130,0,.2));border-radius:var(--border-radius-md);padding:10px 12px;font-size:12px;color:var(--color-text-success);margin:8px 0;line-height:1.6}
+.warn-box{background:var(--color-background-warning);border:0.5px solid var(--color-border-warning,rgba(150,90,0,.2));border-radius:var(--border-radius-md);padding:10px 12px;font-size:12px;color:var(--color-text-warning);margin:8px 0;line-height:1.6}
+.info-box{background:var(--color-background-info);border:0.5px solid var(--color-border-info,rgba(0,90,180,.2));border-radius:var(--border-radius-md);padding:10px 12px;font-size:12px;color:var(--color-text-info);margin:8px 0;line-height:1.6}
+.bar-wrap{flex:1;height:5px;background:var(--color-border-tertiary);border-radius:3px;overflow:hidden;min-width:60px}
+.bar-fill{height:100%;border-radius:3px}
+.chevron{font-size:10px;color:var(--color-text-tertiary)}
+.section-label{font-size:11px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-tertiary);margin:14px 0 6px}
+</style>
+
+<div class="tab-bar">
+  <div class="tab active" onclick="showTab('timeline')">Timeline</div>
+  <div class="tab" onclick="showTab('existing')">Existing strategies (5)</div>
+  <div class="tab" onclick="showTab('new')">New strategies to add (8)</div>
+  <div class="tab" onclick="showTab('plan')">Full updated plan</div>
+</div>
+
+<div id="tab-timeline" class="tab-content active">
+  <div class="summary-grid">
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-info)">7</div><div class="metric-label">Days: local setup + running</div></div>
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-warning)">30</div><div class="metric-label">Days: fix existing issues</div></div>
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-success)">45</div><div class="metric-label">Days: add new strategies</div></div>
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-primary)">~90</div><div class="metric-label">Total days, local to production-ready</div></div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header">
+      <div class="phase-num" style="background:var(--color-background-info);color:var(--color-text-info)">1</div>
+      <div class="phase-title">Local machine — get it running</div>
+      <span class="phase-days" style="background:var(--color-background-info);color:var(--color-text-info)">Days 1–7</span>
+    </div>
+    <div class="phase-body">
+      <div class="task-row"><span class="task-dot" style="background:#185FA5"></span><div style="flex:1"><div class="task-name">Install Python 3.12 if needed + verify setup</div><div class="task-desc">Check version, upgrade if on 3.11. Takes 10 min with my guidance.</div></div><div class="task-days">Day 1 · 1h</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#185FA5"></span><div style="flex:1"><div class="task-name">Install Poetry + clone project + install dependencies</div><div class="task-desc">Run poetry install. All libraries download automatically.</div></div><div class="task-days">Day 1 · 1h</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#185FA5"></span><div style="flex:1"><div class="task-name">Create safe .env + run bot in paper mode</div><div class="task-desc">First time seeing the bot actually run and print log lines.</div></div><div class="task-days">Day 1–2 · 2h</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#185FA5"></span><div style="flex:1"><div class="task-name">Rotate leaked API keys + get testnet credentials</div><div class="task-desc">Register on Delta testnet, generate clean keys, update .env.</div></div><div class="task-days">Day 2–3 · 1h</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#185FA5"></span><div style="flex:1"><div class="task-name">Run paper mode for 48–72 hours, observe behaviour</div><div class="task-desc">Watch log output. Understand what signals it generates. Note anything odd.</div></div><div class="task-days">Day 3–7 · passive</div></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header">
+      <div class="phase-num" style="background:var(--color-background-warning);color:var(--color-text-warning)">2</div>
+      <div class="phase-title">Fix critical existing issues</div>
+      <span class="phase-days" style="background:var(--color-background-warning);color:var(--color-text-warning)">Days 8–37</span>
+    </div>
+    <div class="phase-body">
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Fix Dockerfile Python version (3.11 → 3.12)</div><div class="task-desc">One line change. I'll write it, you paste it.</div></div><div class="task-days">Day 8 · 30 min</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Merge strategy/ and strategies/ duplicate packages</div><div class="task-desc">Clean up confusing dual package structure. 2–3 files to rewrite together.</div></div><div class="task-days">Day 8–10 · 3 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Wire YAML config files so they actually load</div><div class="task-desc">Right now config/paper.yml is ignored. We fix this so settings work properly.</div></div><div class="task-days">Day 10–12 · 2 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Fix RSI calculation (Wilder's smoothing)</div><div class="task-desc">Current RSI is ~7 points off vs standard charting tools. A short fix with big impact.</div></div><div class="task-days">Day 12–13 · 1 day</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Add exchange-native stop-loss orders</div><div class="task-desc">Currently stops only live in memory — lost if bot crashes. Place real stop orders on exchange.</div></div><div class="task-days">Day 14–20 · 6 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Add funding rate awareness</div><div class="task-desc">Perpetual futures charge/pay funding every 8 hours. Bot currently ignores this cost completely.</div></div><div class="task-days">Day 20–24 · 4 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Add time-based max holding period</div><div class="task-desc">Auto-close positions after N candles if stop/TP never triggers. Prevents stuck positions.</div></div><div class="task-days">Day 24–26 · 2 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#BA7517"></span><div style="flex:1"><div class="task-name">Add Grafana + basic dashboards</div><div class="task-desc">Visual trading dashboard so you can see PnL, win rate, drawdown on a screen — not just log files.</div></div><div class="task-days">Day 26–37 · 10 days</div></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header">
+      <div class="phase-num" style="background:var(--color-background-success);color:var(--color-text-success)">3</div>
+      <div class="phase-title">Add new advanced strategies (your valid point)</div>
+      <span class="phase-days" style="background:var(--color-background-success);color:var(--color-text-success)">Days 38–82</span>
+    </div>
+    <div class="phase-body">
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">VWAP deviation strategy</div><div class="task-desc">Most widely used intraday indicator. Adds volume-weighted context that current strategies completely lack.</div></div><div class="task-days">5 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Bollinger Bands squeeze strategy</div><div class="task-desc">Detects volatility contraction before explosive breakouts. Regime detector gets more accurate.</div></div><div class="task-days">4 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">MACD histogram strategy</div><div class="task-desc">Momentum + trend in one. Better entry timing than pure EMA crossover.</div></div><div class="task-days">4 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Order book imbalance strategy</div><div class="task-desc">Uses L2 orderbook data already available in DeltaClient. Detects buy/sell pressure before price moves.</div></div><div class="task-days">6 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Multi-timeframe confluence strategy</div><div class="task-desc">Only trade when 1m, 15m and 1h all agree on direction. Dramatically reduces false signals.</div></div><div class="task-days">6 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Volume-weighted momentum strategy</div><div class="task-desc">Current momentum ignores volume. High volume moves are far more reliable than low volume ones.</div></div><div class="task-days">4 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Breakout + volume confirmation strategy</div><div class="task-desc">Range breakouts with volume spike confirmation. Classic crypto setup that works on all timeframes.</div></div><div class="task-days">5 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Funding rate + open interest strategy</div><div class="task-desc">Delta Exchange exposes funding rates via API. Extreme funding = crowded trade = mean reversion opportunity.</div></div><div class="task-days">6 days</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#3B6D11"></span><div style="flex:1"><div class="task-name">Backtest all new strategies against historical data</div><div class="task-desc">Run each strategy through BacktestEngine. Only add to live regime dispatch if Sharpe > 0.8.</div></div><div class="task-days">5 days</div></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header">
+      <div class="phase-num" style="background:var(--color-background-secondary);color:var(--color-text-secondary)">4</div>
+      <div class="phase-title">Paper trading validation (mandatory before live money)</div>
+      <span class="phase-days" style="background:var(--color-background-secondary);color:var(--color-text-secondary)">Days 83–97</span>
+    </div>
+    <div class="phase-body">
+      <div class="warn-box">Run the fully improved bot in paper mode for minimum 2 weeks before ever switching to live. Watch the Grafana dashboard daily. The strategies must achieve Sharpe ratio above 0.8 and max drawdown below 8% in paper mode before any real money is involved.</div>
+      <div class="task-row"><span class="task-dot" style="background:#888780"></span><div style="flex:1"><div class="task-name">2-week paper trading with all strategies active</div><div class="task-desc">Observe regime detection accuracy, signal frequency, false signal rate.</div></div><div class="task-days">14 days · passive</div></div>
+      <div class="task-row"><span class="task-dot" style="background:#888780"></span><div style="flex:1"><div class="task-name">Analyse results, tune poor-performing strategies</div><div class="task-desc">Use analyse_paper_trades.py script. Fine-tune thresholds on weaker strategies.</div></div><div class="task-days">1 day</div></div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-existing" class="tab-content">
+  <div class="warn-box" style="margin-bottom:12px">These 5 strategies already exist in the code. They work but have known weaknesses — marked below. We fix the weaknesses BEFORE adding new ones.</div>
+
+  <div class="section-label">Existing strategies — click to expand</div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Momentum strategy</div><div style="font-size:11px;color:var(--color-text-secondary)">strategy/momentum.py · Legacy package</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div><div class="star" style="background:#D3D1C7"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-warning);color:var(--color-text-warning);margin:0 8px">Weak</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">3-bar lookback</span><span class="pill">No stop-loss</span><span class="pill">No take-profit</span><span class="pill">No volume</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Measures if the last price is above/below the 3-bar average. Extremely short lookback means it generates signals on noise, not real momentum. Has no stop-loss or take-profit defined — very dangerous in volatile markets.</div>
+      <div class="warn-box">Fix needed: extend lookback to 10–20 bars, add volume filter, add default stop-loss. Or replace with Volume-Weighted Momentum strategy.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">RSI scalping (legacy)</div><div style="font-size:11px;color:var(--color-text-secondary)">strategy/rsi_scalping.py · Wrong RSI formula</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-warning);color:var(--color-text-warning);margin:0 8px">Fix RSI</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">RSI(14)</span><span class="pill">EMA(20)</span><span class="pill">0.4% stop</span><span class="pill">0.8% TP</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Good concept but uses simple average for RSI instead of Wilder's smoothing. This gives RSI values ~5–8 points different from every charting platform. Your RSI-30 threshold is actually ~RSI-37 in TradingView terms — wrong entries.</div>
+      <div class="warn-box">Fix: implement Wilder's smoothing (one-line change). After fix this becomes a solid strategy worth keeping.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">EMA crossover (legacy)</div><div style="font-size:11px;color:var(--color-text-secondary)">strategy/ema_crossover.py · Good baseline</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-success);color:var(--color-text-success);margin:0 8px">Keep</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">EMA(9) / EMA(21)</span><span class="pill">Trailing stop</span><span class="pill">Confidence score</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Solid and well-implemented. Fast EMA crossing above slow = buy. Confidence proportional to EMA divergence. Good stop/TP/trailing setup. Only weakness: operates on price alone with no volume awareness.</div>
+      <div class="highlight">Keep as-is. Upgrade later by adding volume confirmation filter.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Trend following (candle-aware)</div><div style="font-size:11px;color:var(--color-text-secondary)">strategies/trend_following.py · Best existing</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-success);color:var(--color-text-success);margin:0 8px">Strong</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">EMA(9)/EMA(21)</span><span class="pill">ATR-scaled stops</span><span class="pill">Regime-aware</span><span class="pill">TRENDING only</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Best strategy in the codebase. Uses ATR to dynamically scale stop-loss and take-profit distances — much smarter than fixed percentages. Only activates in trending regime. Stop = 1.2×ATR, TP = 2.4×ATR gives a solid 2:1 risk/reward ratio.</div>
+      <div class="highlight">Keep. Consider upgrading with multi-timeframe confirmation.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Mean reversion (candle-aware)</div><div style="font-size:11px;color:var(--color-text-secondary)">strategies/mean_reversion.py · Solid</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-success);color:var(--color-text-success);margin:0 8px">Strong</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">Z-score(20)</span><span class="pill">Entry at ±1.5σ</span><span class="pill">RANGING + LOW_VOL</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Uses statistical z-score to measure how far price has deviated from its 20-bar mean. Enters when price is 1.5 standard deviations away. Well-suited for ranging crypto markets which spend most time in sideways action.</div>
+      <div class="highlight">Keep. Upgrade with Bollinger Bands variant for more signal precision.</div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-new" class="tab-content">
+  <div class="highlight" style="margin-bottom:12px">Your point is valid. These 8 new strategies directly address gaps in the existing set — particularly volume, multi-timeframe, and crypto-specific signals that the current bot completely ignores.</div>
+
+  <div class="section-label">New strategies to build together</div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">VWAP deviation strategy</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 1 · Biggest gap in existing code</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-info);color:var(--color-text-info);margin:0 8px">Must add</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">VWAP line</span><span class="pill">±0.5% deviation entry</span><span class="pill">Volume weighted</span><span class="pill">Intraday</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">VWAP (Volume Weighted Average Price) is the single most-watched level by professional crypto traders. Price far below VWAP = oversold relative to day's volume = buy. Price far above = overbought = sell. Already calculated in professional_bot.py but never used as a strategy signal — we just wire it up.</div>
+      <div class="info-box">Regime: works best in RANGING and LOW_VOL. Estimated build time: 5 days with my help.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Bollinger Bands squeeze + breakout</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 2 · Improves regime detection</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-info);color:var(--color-text-info);margin:0 8px">Must add</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">BB width indicator</span><span class="pill">Squeeze detection</span><span class="pill">Breakout entry</span><span class="pill">HIGH_VOL transition</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Bollinger Bands narrow (squeeze) before big price moves. When bands are tighter than their 20-bar average, the market is coiling for a breakout. Enter when price finally breaks outside the bands with volume. This catches transitions from LOW_VOL to HIGH_VOL regime — exactly what the existing regime detector misses.</div>
+      <div class="info-box">Regime: LOW_VOL transitioning to HIGH_VOL. Build time: 4 days.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">MACD histogram divergence</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 3 · Better trend entries</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-success);color:var(--color-text-success);margin:0 8px">High value</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">MACD(12,26,9)</span><span class="pill">Histogram direction</span><span class="pill">Signal line cross</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">MACD measures momentum and trend together. When the MACD line crosses above its signal line AND the histogram is rising = strong buy. The histogram turning positive before a crossover gives earlier entry than EMA crossover alone. Works in TRENDING regime alongside the existing trend-following strategy.</div>
+      <div class="info-box">Regime: TRENDING. Build time: 4 days.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Order book imbalance strategy</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 4 · Uses existing L2 data</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-info);color:var(--color-text-info);margin:0 8px">Must add</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">L2 orderbook</span><span class="pill">Bid/ask ratio</span><span class="pill">Top 5 levels</span><span class="pill">Pre-move signal</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">The bot already calls get_orderbook() for smart routing but throws away the data after. We use it: if total bid volume in top 5 levels is 70%+ of total, large buyers are stacked = price likely to rise soon. This signal fires BEFORE price moves — unlike every other strategy which reacts after. Unique edge.</div>
+      <div class="info-box">Regime: all regimes. Build time: 6 days (most complex new addition).</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Multi-timeframe confluence</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 5 · Cuts false signals in half</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-success);color:var(--color-text-success);margin:0 8px">High value</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">1m + 15m + 1h</span><span class="pill">All must agree</span><span class="pill">Direction filter</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Current strategies only look at 1-minute candles. Problem: a 1m RSI signal against a strong 1h downtrend will lose almost every time. Fix: fetch 15m and 1h candles as well. Only enter a buy trade if the 1m, 15m AND 1h signals all agree direction is up. Fewer trades, much higher quality.</div>
+      <div class="info-box">Works as a filter on top of any existing strategy. Build time: 6 days.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Funding rate extremes strategy</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 6 · Crypto-specific edge</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-success);color:var(--color-text-success);margin:0 8px">Unique edge</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">Delta API funding data</span><span class="pill">8-hour cycle</span><span class="pill">Contrarian signal</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Delta Exchange exposes funding rates via API. When funding is extremely positive (longs paying shorts a lot), the market is massively overleveraged long — a crash is likely. When extremely negative, shorts are crowded — a squeeze is coming. This is a contrarian signal unique to perpetual futures that traditional strategies cannot detect.</div>
+      <div class="info-box">Regime: works in HIGH_VOL when combined with mean reversion. Build time: 6 days.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Volume-weighted momentum</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 7 · Upgrade existing momentum</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-warning);color:var(--color-text-warning);margin:0 8px">Replaces momentum</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">10-bar momentum</span><span class="pill">Volume multiplier</span><span class="pill">Replaces 3-bar version</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Directly replaces the weak 3-bar momentum strategy. Uses 10-bar momentum multiplied by a volume ratio: if today's volume is 2× average, the momentum signal gets 2× confidence. A price move on high volume is real. A price move on thin volume is a trap. Simple but powerful upgrade.</div>
+      <div class="info-box">Build time: 4 days. Replaces existing weak strategy.</div>
+    </div>
+  </div>
+
+  <div class="strat-card">
+    <div class="strat-header" onclick="toggleStrat(this)">
+      <div style="flex:1"><div class="strat-name">Support / resistance breakout</div><div style="font-size:11px;color:var(--color-text-secondary)">Priority 8 · Classic crypto setup</div></div>
+      <div class="stars"><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#639922"></div><div class="star" style="background:#D3D1C7"></div><div class="star" style="background:#D3D1C7"></div></div>
+      <span class="strat-badge" style="background:var(--color-background-warning);color:var(--color-text-warning);margin:0 8px">Good addition</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="strat-body">
+      <div class="info-row"><span class="pill">20-bar high/low</span><span class="pill">Volume spike</span><span class="pill">Breakout confirmation</span></div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin:6px 0">Identifies the highest high and lowest low over the last 20 bars as key levels. When price breaks above the 20-bar high with a volume spike (volume > 1.5× average), it's a confirmed breakout — buy. Below the 20-bar low with volume — sell. One of the most reliable patterns in crypto markets.</div>
+      <div class="info-box">Regime: TRENDING and HIGH_VOL transitions. Build time: 5 days.</div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-plan" class="tab-content">
+  <div class="info-box" style="margin-bottom:12px">This is the updated master plan incorporating your valid strategy addition request. Total strategies: 5 existing (3 kept, 2 fixed) + 8 new = 11 strategies covering every market regime.</div>
+
+  <div class="section-label">Updated strategy map by regime</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+    <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:12px">
+      <div style="font-size:12px;font-weight:500;margin-bottom:6px;color:var(--color-text-info)">TRENDING regime</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.8">Trend following (ATR stops) — existing<br>EMA crossover — existing<br>MACD histogram — NEW<br>Multi-timeframe confluence — NEW filter</div>
+    </div>
+    <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:12px">
+      <div style="font-size:12px;font-weight:500;margin-bottom:6px;color:var(--color-text-warning)">RANGING regime</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.8">Mean reversion (z-score) — existing<br>VWAP deviation — NEW<br>RSI scalping (fixed) — existing<br>Order book imbalance — NEW</div>
+    </div>
+    <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:12px">
+      <div style="font-size:12px;font-weight:500;margin-bottom:6px;color:var(--color-text-danger)">HIGH VOLATILITY regime</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.8">RSI scalping (fixed) — existing<br>Volume-weighted momentum — NEW<br>Funding rate extremes — NEW<br>Support/resistance breakout — NEW</div>
+    </div>
+    <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:12px">
+      <div style="font-size:12px;font-weight:500;margin-bottom:6px;color:var(--color-text-success)">LOW VOLATILITY regime</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.8">Mean reversion (z-score) — existing<br>VWAP deviation — NEW<br>Bollinger Bands squeeze — NEW<br>(watches for regime transition)</div>
+    </div>
+  </div>
+
+  <div class="section-label">Realistic time estimate for non-coder working with me</div>
+
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px">
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-info)">7 days</div><div class="metric-label">Local setup + running</div></div>
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-warning)">30 days</div><div class="metric-label">Fix existing issues</div></div>
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-success)">45 days</div><div class="metric-label">Build 8 new strategies</div></div>
+    <div class="metric"><div class="metric-val" style="color:var(--color-text-primary)">~97 days</div><div class="metric-label">Paper validated, cloud-ready</div></div>
+  </div>
+
+  <div class="warn-box">These are real working days of 2–3 hours each. Not 8-hour days. If you work on this 1 hour per day, double the estimates. If you work 3–4 hours per day consistently, you may beat them.</div>
+
+  <div class="highlight">Your point about adding strategies is not just valid — it makes the bot meaningfully better. The 8 additions we planned cover volume (completely missing), multi-timeframe (completely missing), order book (data already available but unused), and crypto-specific signals like funding rates. A bot with 11 well-backtested strategies covering all 4 regimes is a serious trading system.</div>
+
+  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <button onclick="sendPrompt('OK let\'s begin Phase 1. Walk me through checking my Python version and getting the project running right now.')" style="font-size:12px;padding:8px 14px;cursor:pointer;border-radius:var(--border-radius-md)">Start Phase 1 now ↗</button>
+    <button onclick="sendPrompt('Can you write the VWAP deviation strategy code for me? That\'s the highest priority new strategy.')" style="font-size:12px;padding:8px 14px;cursor:pointer;border-radius:var(--border-radius-md)">Build VWAP strategy first ↗</button>
+    <button onclick="sendPrompt('Show me how to fix the RSI Wilder smoothing bug — that affects 2 existing strategies right now.')" style="font-size:12px;padding:8px 14px;cursor:pointer;border-radius:var(--border-radius-md)">Fix RSI bug first ↗</button>
+  </div>
+</div>
+
+<script>
+function showTab(id){
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    t.classList.toggle('active', ['timeline','existing','new','plan'][i]===id);
+  });
+  document.querySelectorAll('.tab-content').forEach(c=>{
+    c.classList.toggle('active', c.id==='tab-'+id);
+  });
+}
+function toggleStrat(header){
+  const body = header.nextElementSibling;
+  const chv = header.querySelector('.chevron');
+  const isOpen = body.classList.contains('open');
+  document.querySelectorAll('.strat-body').forEach(b=>b.classList.remove('open'));
+  document.querySelectorAll('.chevron').forEach(c=>c.textContent='▼');
+  if(!isOpen){body.classList.add('open');chv.textContent='▲';}
+}
+</script>

@@ -1,0 +1,179 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans, sans-serif); color: var(--color-text-primary); font-size: 13px; }
+.timeline { padding: 4px 0; }
+.sprint { margin-bottom: 20px; }
+.sprint-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.sprint-num { font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.sprint-title { font-size: 13px; font-weight: 500; }
+.sprint-days { font-size: 11px; color: var(--color-text-secondary); margin-left: auto; white-space: nowrap; }
+.tasks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.task { background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 6px; padding: 8px 10px; display: flex; gap: 8px; align-items: flex-start; }
+.task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+.task-body { flex: 1; }
+.task-name { font-size: 12px; font-weight: 500; line-height: 1.3; }
+.task-sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; line-height: 1.4; }
+.effort { font-size: 10px; border-radius: 3px; padding: 1px 5px; margin-top: 3px; display: inline-block; }
+.e-s { background: var(--color-background-success); color: var(--color-text-success); }
+.e-m { background: var(--color-background-warning); color: var(--color-text-warning); }
+.e-l { background: var(--color-background-danger); color: var(--color-text-danger); }
+.progress-wrap { margin-bottom: 20px; }
+.progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--color-text-secondary); margin-bottom: 4px; }
+.progress-bar { height: 6px; background: var(--color-border-tertiary); border-radius: 3px; overflow: hidden; display: flex; }
+.prog-seg { height: 100%; transition: width 1.2s ease; }
+.summary-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 20px; }
+.metric-card { background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); padding: 10px 12px; }
+.metric-val { font-size: 22px; font-weight: 500; line-height: 1.2; }
+.metric-label { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+</style>
+
+<div class="progress-wrap">
+  <div class="progress-label">
+    <span>Current state (0%)</span><span>Minimum viable prod (65%)</span><span>Full production (100%)</span>
+  </div>
+  <div class="progress-bar">
+    <div class="prog-seg" id="p1" data-w="12" style="width:0%;background:#A32D2D" title="Done (existing)"></div>
+    <div class="prog-seg" id="p2" data-w="25" style="width:0%;background:#BA7517" title="Sprint 1-2"></div>
+    <div class="prog-seg" id="p3" data-w="28" style="width:0%;background:#3B6D11" title="Sprint 3-5"></div>
+    <div class="prog-seg" id="p4" data-w="20" style="width:0%;background:#185FA5" title="Sprint 6-8"></div>
+    <div class="prog-seg" id="p5" data-w="15" style="width:0%;background:#7c6be8" title="Sprint 9-10"></div>
+  </div>
+  <div style="display:flex;gap:12px;margin-top:6px;flex-wrap:wrap">
+    <span style="font-size:10px;display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#A32D2D;display:inline-block"></span>Existing codebase (~38%)</span>
+    <span style="font-size:10px;display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#BA7517;display:inline-block"></span>Critical security + fixes</span>
+    <span style="font-size:10px;display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#3B6D11;display:inline-block"></span>Core hardening</span>
+    <span style="font-size:10px;display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#185FA5;display:inline-block"></span>Infra + CI/CD</span>
+    <span style="font-size:10px;display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#7c6be8;display:inline-block"></span>AI agents</span>
+  </div>
+</div>
+
+<div class="summary-grid">
+  <div class="metric-card"><div class="metric-val" style="color:#A32D2D">~90</div><div class="metric-label">Total dev days (1 senior dev)</div></div>
+  <div class="metric-card"><div class="metric-val" style="color:#BA7517">~50</div><div class="metric-label">Days to MVP production-ready</div></div>
+  <div class="metric-card"><div class="metric-val" style="color:#185FA5">~35</div><div class="metric-label">Additional days for AI agents</div></div>
+  <div class="metric-card"><div class="metric-val" style="color:#3B6D11">~5</div><div class="metric-label">Days immediate security fixes</div></div>
+</div>
+
+<div class="timeline">
+
+  <!-- SPRINT 1 -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:var(--color-background-danger);color:var(--color-text-danger)">Sprint 1</span>
+      <span class="sprint-title">Security & Credential Triage</span>
+      <span class="sprint-days">Days 1–5 · CRITICAL · do now</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#A32D2D"></span><div class="task-body"><div class="task-name">Rotate leaked API keys immediately</div><div class="task-sub">Generate new Delta Exchange credentials, revoke old. Add .env to .gitignore. Run git-filter-branch to purge history.</div><span class="effort e-s">0.5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#A32D2D"></span><div class="task-body"><div class="task-name">Integrate HashiCorp Vault / AWS Secrets Manager</div><div class="task-sub">Move all secrets to Vault. Bot reads at startup via hvac Python client. No secrets on disk ever.</div><span class="effort e-m">2 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#A32D2D"></span><div class="task-body"><div class="task-name">Add git-secrets pre-commit hook</div><div class="task-sub">Block any future commit containing API keys, tokens, or DSNs. Add bandit and ruff hooks.</div><span class="effort e-s">0.5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#A32D2D"></span><div class="task-body"><div class="task-name">Fix Dockerfile Python version</div><div class="task-sub">Change FROM python:3.11-slim → python:3.12-slim. Implement multi-stage build. Pin image digest SHA.</div><span class="effort e-s">1 day</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#A32D2D"></span><div class="task-body"><div class="task-name">Enable Delta Exchange IP whitelisting</div><div class="task-sub">Restrict API key to deployment server static IP. Add NAT gateway if cloud-deployed.</div><span class="effort e-s">0.5 days</span></div></div>
+    </div>
+  </div>
+
+  <!-- SPRINT 2 -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:var(--color-background-danger);color:var(--color-text-danger)">Sprint 2</span>
+      <span class="sprint-title">Exchange-Native Stop Orders + Async DB</span>
+      <span class="sprint-days">Days 6–15 · HIGH priority</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Place stop-limit orders on Delta Exchange</div><div class="task-sub">POST stop_limit_order after every entry. Store exchange stop order ID in open_position_state. Cancel on exit.</div><span class="effort e-l">4 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Migrate to aiosqlite or asyncpg</div><div class="task-sub">Replace sqlite3 with aiosqlite. All StateDB methods become async. Add connection pool. Wire PostgreSQL for prod.</div><span class="effort e-l">3 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Wire Redis caching layer</div><div class="task-sub">Price cache, rate-limit budget tracker, distributed lock for position sync. Use redis-py async client.</div><span class="effort e-m">2 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Unified strategy package</div><div class="task-sub">Deprecate strategy/ legacy package. Migrate all consumers to CandleStrategy ABC. Refactor BacktestEngine.</div><span class="effort e-m">2 days</span></div></div>
+    </div>
+  </div>
+
+  <!-- SPRINT 3 -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:var(--color-background-warning);color:var(--color-text-warning)">Sprint 3</span>
+      <span class="sprint-title">CI/CD Pipeline + Config System</span>
+      <span class="sprint-days">Days 16–25</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">GitHub Actions full pipeline</div><div class="task-sub">ruff → mypy → pytest (≥80% coverage) → docker build → push ECR → deploy staging → smoke test → prod.</div><span class="effort e-l">4 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Wire YAML config overlays</div><div class="task-sub">Loader in Settings reads config/{env}.yml, merges with env vars. Add dynaconf or custom merge logic.</div><span class="effort e-m">1.5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Rate-limit token bucket per endpoint</div><div class="task-sub">Implement per-endpoint budget tracker backed by Redis. Preemptive slow-down before 429.</div><span class="effort e-m">2 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#BA7517"></span><div class="task-body"><div class="task-name">Integration test suite</div><div class="task-sub">Add integration tests for full paper trading cycle using Delta testnet. Test WS reconnect, position sync, kill-switch trigger.</div><span class="effort e-l">3 days</span></div></div>
+    </div>
+  </div>
+
+  <!-- SPRINT 4 -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:var(--color-background-warning);color:var(--color-text-warning)">Sprint 4</span>
+      <span class="sprint-title">Observability Stack</span>
+      <span class="sprint-days">Days 26–35</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">5 Grafana dashboards</div><div class="task-sub">Trading overview, risk monitor, API health, strategy breakdown, infrastructure. Export as provisioned JSON.</div><span class="effort e-l">4 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Prometheus Alertmanager rules</div><div class="task-sub">6 alert rules with Slack + PagerDuty routing. Silence schedule for off-market hours.</div><span class="effort e-m">1.5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Grafana Loki log aggregation</div><div class="task-sub">Add Loki + Promtail to compose. Ship structured JSON logs. Correlate trade_id across logs + metrics.</div><span class="effort e-m">2 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Add 12 missing Prometheus metrics</div><div class="task-sub">regime_detected, strategy_selected, slippage_pct, position_sync_latency, ws_reconnect_count, fee_total, signal_confidence, ...</div><span class="effort e-m">2 days</span></div></div>
+    </div>
+  </div>
+
+  <!-- SPRINT 5 -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:var(--color-background-warning);color:var(--color-text-warning)">Sprint 5</span>
+      <span class="sprint-title">Strategy Enhancements + Risk Improvements</span>
+      <span class="sprint-days">Days 36–50</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#3B6D11"></span><div class="task-body"><div class="task-name">Per-strategy PnL attribution</div><div class="task-sub">Track realized PnL per strategy per session. Add strategy_performance dashboard. Enables capital allocation by strategy.</div><span class="effort e-m">2 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#3B6D11"></span><div class="task-body"><div class="task-name">Portfolio-level risk management</div><div class="task-sub">Add correlation matrix between open positions. Reduce size if symbols are highly correlated. VaR calculation.</div><span class="effort e-l">4 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#3B6D11"></span><div class="task-body"><div class="task-name">Walk-forward backtesting</div><div class="task-sub">Rolling window backtest for parameter stability testing. Add to CI pipeline as nightly strategy health check.</div><span class="effort e-l">4 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#3B6D11"></span><div class="task-body"><div class="task-name">Volatility regime calendar overlay</div><div class="task-sub">Suppress trading during known high-risk windows (major macro events, FOMC, CPI). Load economic calendar API.</div><span class="effort e-m">2 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#3B6D11"></span><div class="task-body"><div class="task-name">Log rotation + audit archival</div><div class="task-sub">Add log rotation policy (7-day raw, 90-day compressed). Archive execution_logs to cold storage monthly.</div><span class="effort e-s">1 day</span></div></div>
+    </div>
+  </div>
+
+  <!-- SPRINTS 6-8: AI AGENTS -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:rgba(100,70,200,.15);color:#7c6be8">Sprints 6–8</span>
+      <span class="sprint-title">AI Agent Integration (OpenClaw / CrewAI / LangGraph)</span>
+      <span class="sprint-days">Days 51–75</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#7c6be8"></span><div class="task-body"><div class="task-name">Code Audit Agent (OpenClaw / Claude API)</div><div class="task-sub">GitHub Action triggers on PR. Runs pylint + bandit, feeds diffs to LLM, posts structured review. 3 days setup + 2 days tuning.</div><span class="effort e-l">5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#7c6be8"></span><div class="task-body"><div class="task-name">Log Audit Agent (LangGraph)</div><div class="task-sub">5-min cron reading JSON logs. LLM pattern detection. Slack alert with root-cause hypothesis. Incident digest.</div><span class="effort e-l">5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#7c6be8"></span><div class="task-body"><div class="task-name">Strategy Performance Agent (CrewAI)</div><div class="task-sub">Daily multi-agent job: data agent → analyst agent → report agent. HTML report via email. Parameter suggestion.</div><span class="effort e-l">5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#7c6be8"></span><div class="task-body"><div class="task-name">Risk Anomaly Agent (Autogen)</div><div class="task-sub">Polls Prometheus API every 30s. LLM evaluates metric patterns. Can invoke emergency_exit.py as a tool.</div><span class="effort e-l">5 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#7c6be8"></span><div class="task-body"><div class="task-name">Market Research Agent (Tavily + LLM)</div><div class="task-sub">Pre-market news scraping and sentiment scoring per symbol. Risk param adjustment on high-impact events.</div><span class="effort e-m">3 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#7c6be8"></span><div class="task-body"><div class="task-name">Test Generation Agent (Claude API)</div><div class="task-sub">On PR open: analyse changed modules, generate edge-case tests, submit as follow-up PR. Coverage gate.</div><span class="effort e-m">3 days</span></div></div>
+    </div>
+  </div>
+
+  <!-- SPRINTS 9-10: PRODUCTION HARDENING -->
+  <div class="sprint">
+    <div class="sprint-header">
+      <span class="sprint-num" style="background:var(--color-background-info);color:var(--color-text-info)">Sprints 9–10</span>
+      <span class="sprint-title">Production Hardening + Load Testing</span>
+      <span class="sprint-days">Days 76–90</span>
+    </div>
+    <div class="tasks">
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">OpenTelemetry distributed tracing</div><div class="task-sub">Add OTEL spans to all API calls, process_symbol(), execute_order(). Jaeger backend. Correlate trade_id across telemetry.</div><span class="effort e-l">3 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Chaos engineering tests</div><div class="task-sub">Simulate: API timeout, WS disconnect, DB unavailable, kill-switch trigger mid-trade. Verify graceful handling.</div><span class="effort e-l">3 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Multi-asset correlation + VaR</div><div class="task-sub">Portfolio VaR using historical simulation. Position sizing accounts for BTC/ETH/SOL correlation at market stress.</div><span class="effort e-l">4 days</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Paper trading validation gate</div><div class="task-sub">Run 30-day paper trading benchmark. Bot must meet minimum Sharpe ≥ 0.8 before any live-mode promotion.</div><span class="effort e-m">Ongoing</span></div></div>
+      <div class="task"><span class="task-dot" style="background:#185FA5"></span><div class="task-body"><div class="task-name">Runbook + operations documentation</div><div class="task-sub">Write SOP for: incident response, emergency exit, deployment, rollback, strategy parameter update, key rotation.</div><span class="effort e-m">2 days</span></div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+setTimeout(() => {
+  ['p1','p2','p3','p4','p5'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.width = el.dataset.w + '%';
+  });
+}, 100);
+</script>
