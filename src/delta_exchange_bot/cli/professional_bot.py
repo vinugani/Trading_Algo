@@ -1568,6 +1568,7 @@ class ProfessionalTradingBot:
                     logger.warning("Detected external shutdown signal file. Stopping bot loop gracefully.")
                     break
                 started = time.perf_counter()
+                logger.info("Cycle %d started: analyzing %d symbols...", cycle + 1, len(self.settings.trade_symbols))
                 if self.settings.mode == "live":
                     await asyncio.to_thread(self._refresh_live_equity)
                 tasks = [self.process_symbol(symbol) for symbol in self.settings.trade_symbols]
