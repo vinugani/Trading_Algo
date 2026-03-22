@@ -52,17 +52,32 @@ def fetch_candles(symbol: str, interval: str, api_url: Optional[str] = None) -> 
     if interval not in SUPPORTED_INTERVALS:
         raise ValueError(f"Unsupported interval '{interval}'. Allowed: {', '.join(SUPPORTED_INTERVALS)}")
 
-    end_ts = int(time.time())
-    start_ts = end_ts - (SUPPORTED_INTERVALS[interval] * DEFAULT_LOOKBACK_CANDLES)
-
     client = _build_public_client(api_url)
-    payload = client.get_candles(symbol=symbol, resolution=interval, start=start_ts, end=end_ts)
-    candles = payload.get("result", []) if isinstance(payload, dict) else []
+    end_ts = int(time.time())
+    lookback_s = SUPPORTED_INTERVALS[interval] * DEFAULT_LOOKBACK_CANDLES
+    start_ts = end_ts - lookback_s
 
-    if not candles:
+    payload = client.get_candles(symbol=symbol, resolution=interval, start=start_ts, end=end_ts)
+    result = payload.get("result", []) if isinstance(payload, dict) else []
+
+    # Robust Fallback for lagged Testnets (e.g. Delta India Testnet can lag by 60+ hours)
+    if not result:
+        # Try a 7-day lookback to find the latest available data
+        fallback_start = end_ts - (86400 * 7)
+        fallback_payload = client.get_candles(symbol=symbol, resolution=interval, start=fallback_start, end=end_ts)
+        fallback_result = fallback_payload.get("result", []) if isinstance(fallback_payload, dict) else []
+        if fallback_result:
+            # Anchor to the latest candle found
+            latest_found = fallback_result[-1]["time"]
+            start_ts = latest_found - lookback_s
+            end_ts = latest_found
+            payload = client.get_candles(symbol=symbol, resolution=interval, start=start_ts, end=end_ts)
+            result = payload.get("result", []) if isinstance(payload, dict) else []
+
+    if not result:
         return pd.DataFrame(columns=["symbol", "timestamp", "open", "high", "low", "close", "volume"])
 
-    df = pd.DataFrame(candles)
+    df = pd.DataFrame(result)
     for col in ("open", "high", "low", "close", "volume"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
