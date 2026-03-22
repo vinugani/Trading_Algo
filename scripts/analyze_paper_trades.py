@@ -22,6 +22,8 @@ class ClosedTrade:
     pnl: float
     entry_ts: str
     exit_ts: str
+    strategy_name: Optional[str] = "unknown"
+    duration_s: Optional[float] = None
 
 
 def _to_float(value) -> float:
@@ -58,6 +60,9 @@ def _get_mark_price(symbol: str, api_url: str) -> Optional[float]:
 
 
 def _load_execution_rows(conn: sqlite3.Connection, mode: str, lookback_days: int) -> list[dict]:
+    # Mode filter is not in trade_records currently, but we can filter by symbol/trade_id patterns
+    # Actually, we can just load all trade_records for now or add mode to trade_records if needed.
+    # For now, we'll keep the execution_logs load for backward compatibility.
     if lookback_days > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         cutoff_s = cutoff.strftime("%Y-%m-%d %H:%M:%S")
@@ -95,7 +100,54 @@ def _load_execution_rows(conn: sqlite3.Connection, mode: str, lookback_days: int
     return out
 
 
-def _build_closed_trades(execution_rows: list[dict]) -> tuple[list[ClosedTrade], set[str]]:
+def _load_trade_records(conn: sqlite3.Connection, lookback_days: int) -> list[ClosedTrade]:
+    try:
+        if lookback_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+            cutoff_s = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+            query = """
+                SELECT trade_id, symbol, side, size, entry_price, exit_price, pnl_raw, entry_time, exit_time, strategy_name, duration_s
+                FROM trade_records
+                WHERE status = 'closed' AND exit_time >= ?
+            """
+            rows = conn.execute(query, (cutoff_s,)).fetchall()
+        else:
+            query = """
+                SELECT trade_id, symbol, side, size, entry_price, exit_price, pnl_raw, entry_time, exit_time, strategy_name, duration_s
+                FROM trade_records
+                WHERE status = 'closed'
+            """
+            rows = conn.execute(query).fetchall()
+
+        out = []
+        for r in rows:
+            out.append(
+                ClosedTrade(
+                    trade_id=r[0],
+                    symbol=r[1],
+                    side=r[2],
+                    size=r[3],
+                    entry_price=r[4],
+                    exit_price=r[5],
+                    pnl=r[6],
+                    entry_ts=r[7],
+                    exit_ts=r[8],
+                    strategy_name=r[9],
+                    duration_s=r[10],
+                )
+            )
+        return out
+    except Exception:
+        # Table might not exist yet in some environments
+        return []
+
+
+def _build_closed_trades(
+    execution_rows: list[dict], trade_records: list[ClosedTrade]
+) -> tuple[list[ClosedTrade], set[str]]:
+    # Prefer trade_records
+    closed_from_records = {t.trade_id: t for t in trade_records}
+
     by_trade: dict[str, list[dict]] = {}
     for row in execution_rows:
         by_trade.setdefault(row["trade_id"], []).append(row)
@@ -103,6 +155,10 @@ def _build_closed_trades(execution_rows: list[dict]) -> tuple[list[ClosedTrade],
     closed: list[ClosedTrade] = []
     open_trade_ids: set[str] = set()
     for trade_id, rows in by_trade.items():
+        if trade_id in closed_from_records:
+            closed.append(closed_from_records[trade_id])
+            continue
+
         entries = [r for r in rows if r["event_type"] == "entry"]
         exits = [r for r in rows if r["event_type"] == "exit"]
         if not entries:
@@ -134,6 +190,8 @@ def _build_closed_trades(execution_rows: list[dict]) -> tuple[list[ClosedTrade],
                 pnl=pnl,
                 entry_ts=entry["ts"],
                 exit_ts=exit_row["ts"],
+                strategy_name="legacy",
+                duration_s=None,
             )
         )
 
@@ -311,11 +369,17 @@ def print_report(
 
     if closed:
         print("\nRECENT CLOSED TRADES (last 20)")
-        print("-" * 90)
+        print("-" * 115)
+        print(f"{'Exit Time':<12} | {'Trade ID':<25} | {'Sym':<8} | {'Side':<4} | {'PnL':<8} | {'Strategy':<15} | {'Dur'}")
+        print("-" * 115)
         for t in closed[-20:]:
+            # Shorten timestamp: 2026-03-21 12:05:01 -> 03-21 12:05
+            ts_short = t.exit_ts[5:16] if len(t.exit_ts) >= 16 else t.exit_ts
+            duration = f"{t.duration_s:.0f}s" if t.duration_s is not None else "N/A"
+            trade_id_short = t.trade_id[:22] + ".." if len(t.trade_id) > 24 else t.trade_id
             print(
-                f"{t.exit_ts} | {t.trade_id} | {t.symbol} | {t.side} | "
-                f"entry={t.entry_price:.6f} exit={t.exit_price:.6f} size={t.size:.6f} pnl={t.pnl:.4f}"
+                f"{ts_short:<12} | {trade_id_short:<25} | {t.symbol[:8]:<8} | {t.side[:4]:<4} | "
+                f"{t.pnl:>8.4f} | {t.strategy_name[:15]:<15} | {duration}"
             )
 
 
@@ -341,7 +405,8 @@ def main() -> None:
     conn = sqlite3.connect(str(db_path))
     try:
         execution_rows = _load_execution_rows(conn, mode=args.mode, lookback_days=args.lookback_days)
-        closed, _ = _build_closed_trades(execution_rows)
+        trade_records = _load_trade_records(conn, lookback_days=args.lookback_days)
+        closed, _ = _build_closed_trades(execution_rows, trade_records)
         open_positions = _load_open_positions(conn, mode=args.mode)
     finally:
         conn.close()

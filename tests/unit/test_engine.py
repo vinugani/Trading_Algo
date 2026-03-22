@@ -20,6 +20,12 @@ class DummyDB:
             }
         )
 
+    def upsert_trade_record(self, **kwargs):
+        pass
+
+    def close_trade_record(self, **kwargs):
+        pass
+
 
 def test_fetch_market_snapshot_reads_nested_delta_ticker(monkeypatch):
     settings = Settings(mode="paper", trade_symbols=["BTCUSD"])
@@ -86,7 +92,7 @@ def test_process_protection_triggers_updates_position_and_db(monkeypatch):
     settings = Settings(mode="live", trade_symbols=["BTCUSD"], api_key="key", api_secret="secret")
     engine = TradingEngine(settings)
     engine.db = DummyDB()
-    engine.positions["BTCUSD"] = {"size": 2.0, "side": "long", "entry_time": 1000.0, "entry_price": 100.0}
+    engine.positions["BTCUSD"] = {"size": 2.0, "side": "long", "entry_time": 1000.0, "entry_price": 100.0, "trade_id": "test-trade"}
 
     monkeypatch.setattr(
         engine.execution_engine,

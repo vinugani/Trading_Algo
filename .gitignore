@@ -14,3 +14,4 @@ logs/
 keys.txt
 *.pem
 errors1.txt
+state.db

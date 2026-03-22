@@ -1081,6 +1081,15 @@ class ProfessionalTradingBot:
             trailing_stop_pct=signal.trailing_stop_pct,
             mode=self.settings.mode,
         )
+        self.db.upsert_trade_record(
+            trade_id=trade_id,
+            symbol=symbol,
+            side=position_side,
+            size=size,
+            entry_price=signal.price,
+            strategy_name=strategy_name,
+            metadata={"entry_order_type": entry_order_type}
+        )
         if signal.stop_loss is not None:
             self.execution_engine.place_stop_loss(
                 symbol=symbol,
@@ -1380,6 +1389,7 @@ class ProfessionalTradingBot:
                 )
         else:
             self._update_trade_stats(pnl=realized_accum + real_pnl, strategy_name=strategy_name)
+            self.db.close_trade_record(trade_id=trade_id, exit_price=exit_price)
 
         self.db.save_execution(
             trade_id=trade_id,

@@ -109,6 +109,28 @@ class StateDB:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trade_records (
+                    trade_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    strategy_name TEXT,
+                    side TEXT NOT NULL,
+                    size REAL NOT NULL,
+                    entry_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    exit_time DATETIME,
+                    entry_price REAL,
+                    exit_price REAL,
+                    pnl_raw REAL,
+                    pnl_pct REAL,
+                    duration_s REAL,
+                    status TEXT DEFAULT 'open',
+                    metadata_json TEXT
+                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_symbol ON trade_records(symbol)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_status ON trade_records(status)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_trade_id ON orders(trade_id)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_symbol_ts ON signals(symbol, ts)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_perf_mode_ts ON performance_metrics(mode, ts)")
@@ -357,3 +379,102 @@ class StateDB:
     def get_positions(self) -> Dict[str, Dict[str, float]]:
         cursor = self._conn.execute("SELECT symbol, size, avg_price FROM positions")
         return {row[0]: {"size": row[1], "avg_price": row[2]} for row in cursor.fetchall()}
+
+    def upsert_trade_record(
+        self,
+        *,
+        trade_id: str,
+        symbol: str,
+        side: str,
+        size: float,
+        entry_price: float,
+        strategy_name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO trade_records (
+                    trade_id, symbol, strategy_name, side, size, entry_price, status, metadata_json, entry_time
+                ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(trade_id) DO UPDATE SET
+                    size=excluded.size,
+                    entry_price=excluded.entry_price,
+                    metadata_json=excluded.metadata_json
+                """,
+                (trade_id, symbol, strategy_name, side, size, entry_price, metadata_json),
+            )
+
+    def close_trade_record(
+        self,
+        *,
+        trade_id: str,
+        exit_price: float,
+        exit_time: Optional[float] = None,
+    ) -> None:
+        with self._conn:
+            # First, fetch entry details to calculate PnL
+            cursor = self._conn.execute(
+                "SELECT side, size, entry_price, entry_time FROM trade_records WHERE trade_id = ?",
+                (trade_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return
+
+            side, size, entry_price, entry_time_str = row
+            
+            # Simple PnL calculation
+            if side.lower() == "long":
+                pnl_raw = (exit_price - entry_price) * size
+            else:
+                pnl_raw = (entry_price - exit_price) * size
+            
+            pnl_pct = (pnl_raw / (entry_price * size)) * 100 if entry_price * size != 0 else 0.0
+            
+            # Duration calculation is tricky with SQLlite DEFAULT CURRENT_TIMESTAMP (which is a string)
+            # We'll just use the current time the DB sees for exit_time if not provided
+            self._conn.execute(
+                """
+                UPDATE trade_records SET
+                    exit_price = ?,
+                    exit_time = CURRENT_TIMESTAMP,
+                    pnl_raw = ?,
+                    pnl_pct = ?,
+                    status = 'closed',
+                    duration_s = (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', entry_time))
+                WHERE trade_id = ?
+                """,
+                (exit_price, pnl_raw, pnl_pct, trade_id),
+            )
+
+    def get_trade_records(self, limit: int = 50) -> list[dict]:
+        cursor = self._conn.execute(
+            """
+            SELECT trade_id, symbol, strategy_name, side, size, entry_time, exit_time,
+                   entry_price, exit_price, pnl_raw, pnl_pct, duration_s, status
+            FROM trade_records
+            ORDER BY entry_time DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        out = []
+        for r in cursor.fetchall():
+            out.append({
+                "trade_id": r[0],
+                "symbol": r[1],
+                "strategy_name": r[2],
+                "side": r[3],
+                "size": r[4],
+                "entry_time": r[5],
+                "exit_time": r[6],
+                "entry_price": r[7],
+                "exit_price": r[8],
+                "pnl_raw": r[9],
+                "pnl_pct": r[10],
+                "duration_s": r[11],
+                "status": r[12]
+            })
+        return out

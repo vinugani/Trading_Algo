@@ -1,5 +1,6 @@
 import time
 import logging
+import uuid
 from collections import defaultdict, deque
 from typing import Dict, Optional
 
@@ -101,19 +102,33 @@ class TradingEngine:
         new_size = current["size"] + delta
         
         if abs(new_size) < 1e-12:
-            self.positions.pop(symbol, None)
+            current_pos = self.positions.pop(symbol, None)
+            if current_pos and "trade_id" in current_pos:
+                self.db.close_trade_record(trade_id=current_pos["trade_id"], exit_price=price)
             return 0.0
         else:
             if current["size"] == 0:
                 # New position
+                trade_id = f"{symbol}-{uuid.uuid4().hex[:8]}"
+                side_str = "long" if new_size > 0 else "short"
                 self.positions[symbol] = {
-                    "side": "long" if new_size > 0 else "short",
+                    "trade_id": trade_id,
+                    "side": side_str,
                     "size": new_size,
                     "entry_time": time.time(),
                     "entry_price": price
                 }
+                self.db.upsert_trade_record(
+                    trade_id=trade_id,
+                    symbol=symbol,
+                    side=side_str,
+                    size=abs(new_size),
+                    entry_price=price,
+                    strategy_name=getattr(self.strategy, "name", self.settings.strategy_name)
+                )
             else:
                 self.positions[symbol]["size"] = new_size
+                # Optionally update size in trade_record if partial fill/add (simplified here)
             return new_size
 
     @staticmethod
