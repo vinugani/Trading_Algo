@@ -912,7 +912,7 @@ class ProfessionalTradingBot:
             metadata={"indicators": indicators},
         )
         logger.info(
-            "Signal Generated: %s | %s | Action: %s | Price: %.2f | Strategy: %s",
+            "Signal Generated: {} | {} | Action: {} | Price: {:.2f} | Strategy: {}",
             signal_id, signal.symbol, signal.action, signal.price, strategy_name
         )
         return signal_id
