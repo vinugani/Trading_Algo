@@ -1520,16 +1520,23 @@ class ProfessionalTradingBot:
                 return
 
         try:
+            logger.info(f"[{symbol}] Fetching candles...")
             candles = await asyncio.to_thread(self.fetch_market_data, symbol)
+            logger.info(f"[{symbol}] Successfully fetched {len(candles)} candles.")
         except Exception as exc:
-            logger.warning("Market data fetch failed for %s: %s", symbol, exc)
+            logger.warning(f"Market data fetch failed for {symbol}: {exc}")
             return
+        
         indicators = self.calculate_indicators(candles)
         if not indicators:
+            logger.warning(f"[{symbol}] Could not calculate indicators (missing data).")
             self._last_no_trade_reason = "market_data_unavailable"
             return
+        
+        price = indicators.get("price", 0.0)
+        logger.info(f"[{symbol}] Indicators calculated. Current Price: {price:.2f}")
 
-        self._on_realtime_price(symbol, indicators["price"])
+        self._on_realtime_price(symbol, price)
         if symbol in self._open_positions:
             self._last_no_trade_reason = "existing_open_position"
             return
@@ -1537,9 +1544,13 @@ class ProfessionalTradingBot:
         signal, regime, strategy_name = self.generate_strategy_signal(symbol, candles)
         signal = self._with_default_protection(signal)
         self._save_signal(signal=signal, strategy_name=strategy_name, regime=regime, indicators=indicators)
+        
         if signal.action.lower() == "hold":
+            logger.info(f"[{symbol}] Signal: HOLD (Confidence: {signal.confidence:.2f})")
             self._last_no_trade_reason = "strategy_signal_hold"
             return
+        
+        logger.info(f"[{symbol}] DETECTED SIGNAL: {signal.action.upper()} (Confidence: {signal.confidence:.2f})")
 
         if self.settings.mode == "live" and self._position_mismatch_detected(symbol):
             self._last_no_trade_reason = "position_mismatch"
@@ -1583,7 +1594,7 @@ class ProfessionalTradingBot:
                     logger.warning("Detected external shutdown signal file. Stopping bot loop gracefully.")
                     break
                 started = time.perf_counter()
-                logger.info("Cycle %d started: analyzing %d symbols...", cycle + 1, len(self.settings.trade_symbols))
+                logger.info(f"Cycle {cycle + 1} started: analyzing {len(self.settings.trade_symbols)} symbols...")
                 if self.settings.mode == "live":
                     await asyncio.to_thread(self._refresh_live_equity)
                 tasks = [self.process_symbol(symbol) for symbol in self.settings.trade_symbols]
