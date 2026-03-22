@@ -9,6 +9,11 @@ class StateDB:
     def __init__(self, path: str = "state.db"):
         self._path = Path(path)
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        # WAL mode allows concurrent readers + one writer without locking errors.
+        # busy_timeout gives writers up to 5 s to acquire the lock before raising.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._create_tables()
 
     def _create_tables(self):
@@ -83,12 +88,28 @@ class StateDB:
                     mode TEXT NOT NULL,
                     status TEXT NOT NULL,
                     reason TEXT,
-                    client_order_id TEXT UNIQUE,
+                    client_order_id TEXT,
                     exchange_order_id TEXT,
                     metadata_json TEXT,
                     ts DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """
+            )
+            # Migration: drop the legacy UNIQUE index on client_order_id if it
+            # still exists from an older schema.  client_order_id is not
+            # globally unique — the same prefix can appear across separate paper
+            # sessions.  execution_id (uuid-based) provides the uniqueness
+            # guarantee we actually need.
+            try:
+                self._conn.execute(
+                    "DROP INDEX IF EXISTS sqlite_autoindex_execution_logs_2"
+                )
+            except Exception:
+                pass
+            # Re-create as a plain non-unique index for query performance.
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_execution_logs_client_order_id "
+                "ON execution_logs(client_order_id)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_execution_logs_trade_id ON execution_logs(trade_id)"

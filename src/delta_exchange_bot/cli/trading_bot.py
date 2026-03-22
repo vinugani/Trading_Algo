@@ -32,7 +32,7 @@ class MainTradingBot:
         self.client = DeltaClient(settings.api_key, settings.api_secret, settings.api_url)
         live_client = self.client if settings.mode == "live" else None
         self.execution_engine = OrderExecutionEngine(live_client)
-        self.db = StateDB("state.db")
+        self.db = StateDB(settings.state_db_path)
         self.metrics = PrometheusMetricsExporter()
         self.strategy = self._build_strategy(settings.strategy_name)
         self.account_equity = 100000.0
@@ -631,6 +631,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=["paper", "live"], default="paper")
     parser.add_argument("--strategy", choices=["momentum", "rsi_scalping", "ema_crossover"], default=None)
     parser.add_argument("--cycles", type=int, default=None, help="Optional number of loop cycles")
+    parser.add_argument("--sleep-interval", type=int, default=60, help="Loop sleep interval in seconds (default: 60)")
     parser.add_argument("--metrics-port", type=int, default=8000, help="Prometheus metrics port")
     parser.add_argument("--metrics-addr", default="0.0.0.0", help="Prometheus bind address")
     parser.add_argument("--disable-metrics-server", action="store_true", help="Disable metrics HTTP exporter")
@@ -644,7 +645,7 @@ def main() -> None:
     if not args.disable_metrics_server:
         bot.metrics.start_server(port=args.metrics_port, addr=args.metrics_addr)
         logger.info("Prometheus metrics exporter started on %s:%s", args.metrics_addr, args.metrics_port)
-    bot.run(max_cycles=args.cycles, sleep_interval_s=60)
+    bot.run(max_cycles=args.cycles, sleep_interval_s=args.sleep_interval)
 
 
 if __name__ == "__main__":

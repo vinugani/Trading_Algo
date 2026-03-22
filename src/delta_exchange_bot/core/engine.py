@@ -26,7 +26,7 @@ class TradingEngine:
         self.execution_engine = OrderExecutionEngine(self.api)
         self.order_manager = OrderManager()
         self.risk_manager = RiskManager(max_positions=settings.max_positions)
-        self.db = StateDB("state.db")
+        self.db = StateDB(settings.state_db_path)
         self.strategy = self._build_strategy(settings.strategy_name)
         self.current_equity = 100000.0
         self.positions: dict[str, dict] = {} # symbol -> {side, size, entry_time, entry_price}
@@ -155,9 +155,6 @@ class TradingEngine:
             )
 
     def _process_protection_triggers(self, market_data: Dict[str, dict]):
-        if self.settings.mode != "live":
-            return
-
         for symbol, series in market_data.items():
             prices = series.get("prices", [])
             if not prices:
@@ -182,7 +179,7 @@ class TradingEngine:
             self.db.save_trade(symbol, exit_side, exit_size, exit_price)
             if updated_position == 0:
                 self.execution_engine.clear_protection(symbol)
-            logger.info("Protection exit executed: %s", triggered)
+            logger.info("Protection exit executed (%s mode): %s", self.settings.mode, triggered)
 
     def _execute_signal(self, signal: Signal):
         if signal.action == "hold":

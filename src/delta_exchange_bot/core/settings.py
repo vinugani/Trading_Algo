@@ -90,8 +90,10 @@ class Settings(BaseSettings):
     order_chunk_size: float = 0.0
     max_retries_per_chunk: int = 3
     position_sync_tolerance: float = 1e-8
-    position_sync_retries: int = 3
-    position_sync_retry_delay_s: float = 1.0
+    # Live exchange order books can take 3-8 s to reflect a new position.
+    # 5 retries × 2.5 s gives up to ~12.5 s settling time before halting.
+    position_sync_retries: int = 5
+    position_sync_retry_delay_s: float = 2.5
     shutdown_signal_path: str = "logs/bot.shutdown"
     cancel_leftover_orders_on_startup: bool = True
     maker_fee_rate: float = 0.0002

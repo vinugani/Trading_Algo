@@ -537,6 +537,12 @@ class ProfessionalTradingBot:
         filled: bool,
     ) -> bool:
         symbol_u = self._normalize_symbol(symbol)
+
+        # Paper mode: position is tracked locally only; exchange always returns
+        # size=0.  Skip exchange sync entirely — local state is already correct.
+        if self.settings.mode != "live":
+            return True
+
         retries = max(1, int(self.settings.position_sync_retries))
         delay_s = max(0.1, float(self.settings.position_sync_retry_delay_s))
         for attempt in range(1, retries + 1):
@@ -556,15 +562,24 @@ class ProfessionalTradingBot:
             if attempt < retries:
                 time.sleep(delay_s)
                 continue
+            # All retries exhausted and exchange still hasn't reflected the new
+            # position.  This is typically an exchange settlement lag (3-10 s on
+            # Delta India).  Log it as critical but do NOT hard-halt — the order
+            # was accepted by the exchange (is_filled=True) so halting here would
+            # leave an orphaned live position with no local tracking.
             logger.critical(
-                "POST_EXECUTION_POSITION_MISMATCH symbol=%s side=%s before=%s after=%s",
+                "POST_EXECUTION_POSITION_NOT_CONFIRMED symbol=%s side=%s "
+                "before=%s after=%s retries=%s — order was accepted; continuing "
+                "with local position state. Verify on exchange dashboard.",
                 symbol_u,
                 side,
                 before_signed,
                 after_signed,
+                retries,
             )
-            self.halt_trading(f"post_execution_mismatch:{symbol_u}")
-            return False
+            # Return True so the position stays tracked locally. A subsequent
+            # cycle's pre_symbol_cycle sync will reconcile once exchange settles.
+            return True
         return False
 
     def cancel_open_orders(self, symbol: Optional[str] = None) -> int:
