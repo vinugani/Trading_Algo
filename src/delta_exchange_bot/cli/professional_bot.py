@@ -896,6 +896,10 @@ class ProfessionalTradingBot:
             trailing_stop_pct=signal.trailing_stop_pct,
             metadata={"indicators": indicators},
         )
+        logger.info(
+            "Signal Generated: %s | %s | Action: %s | Price: %.2f | Strategy: %s",
+            signal_id, signal.symbol, signal.action, signal.price, strategy_name
+        )
         return signal_id
 
     def _validate_risk(self, signal: Signal, indicators: dict[str, float]) -> tuple[bool, float]:
