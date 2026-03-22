@@ -1,7 +1,39 @@
+from pathlib import Path
+from typing import Any 
+
+import os
+import yaml
 from pydantic import AliasChoices
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+from pydantic_settings import PydanticBaseSettingsSource
+
+
+def _load_yaml_config(mode: str) -> dict[str, Any]:
+    config: dict[str, Any] = {}
+    # Use absolute path for reliability on Windows
+    root_dir = Path(__file__).resolve().parents[3]
+    config_dir = root_dir / "config"
+
+    # Load default first, then mode-specific overrides
+    for fname in ("default.yml", f"{mode}.yml"):
+        fpath = config_dir / fname
+        if fpath.exists():
+            try:
+                with open(fpath, "r") as f:
+                    data = yaml.safe_load(f) or {}
+                # Flatten the YAML structure (app:, delta:, etc.)
+                for section in data.values():
+                    if isinstance(section, dict):
+                        config.update(section)
+                    else:
+                        # Handle cases where values are at the top level
+                        config.update(data)
+                        break
+            except Exception as e:
+                print(f"Error loading {fname}: {e}")
+    return config
 
 
 class Settings(BaseSettings):
@@ -66,6 +98,11 @@ class Settings(BaseSettings):
     taker_fee_rate: float = 0.0005
     emergency_exit_verify_timeout_s: int = 20
 
+    # Funding & Time-based closing
+    enable_funding_awareness: bool = True
+    funding_alert_threshold: float = 0.001  # 0.1% per 8h
+    max_holding_time_s: int = 86400  # 24 hours default
+
     enable_strategy_portfolio: bool = True
     enable_advanced_risk: bool = True
     api_circuit_breaker_failure_threshold: int = 5
@@ -80,13 +117,22 @@ class Settings(BaseSettings):
     postgres_dsn: str = Field("postgresql://postgres:postgres@postgres:5432/trading")
 
     def __init__(self, **data):
+        # Determine mode from kwargs or environment
+        mode = data.get("mode") or os.getenv("DELTA_MODE") or os.getenv("mode") or "paper"
+        yaml_config = _load_yaml_config(mode)
+        
+        # Merge YAML config if not already in data (kwargs have priority)
+        for key, value in yaml_config.items():
+            if key not in data:
+                data[key] = value
+                
         super().__init__(**data)
         if self.exchange_env == "prod-india":
             self.api_url = "https://api.india.delta.exchange"
             self.ws_url = "wss://socket.india.delta.exchange"
         elif self.exchange_env == "testnet-india":
             self.api_url = "https://cdn-ind.testnet.deltaex.org"
-            self.ws_url = "wss://testnet-socket.india.delta.exchange"
+            self.ws_url = "wss://socket-ind.testnet.deltaex.org"
         else:
             raise ValueError(f"Unsupported exchange_env={self.exchange_env}")
 

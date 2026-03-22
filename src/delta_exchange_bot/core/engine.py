@@ -28,7 +28,7 @@ class TradingEngine:
         self.db = StateDB("state.db")
         self.strategy = self._build_strategy(settings.strategy_name)
         self.current_equity = 100000.0
-        self.positions: dict[str, float] = {}
+        self.positions: dict[str, dict] = {} # symbol -> {side, size, entry_time, entry_price}
         self._price_history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=50))
 
     @staticmethod
@@ -95,15 +95,26 @@ class TradingEngine:
             market_data[symbol] = {"prices": history, "ticker": ticker}
         return market_data
 
-    def _update_local_position(self, symbol: str, side: str, size: float) -> float:
+    def _update_local_position(self, symbol: str, side: str, size: float, price: float = 0.0) -> float:
         delta = size if side == "buy" else -size
-        updated = self.positions.get(symbol, 0.0) + delta
-        if abs(updated) < 1e-12:
+        current = self.positions.get(symbol, {"size": 0.0})
+        new_size = current["size"] + delta
+        
+        if abs(new_size) < 1e-12:
             self.positions.pop(symbol, None)
             return 0.0
         else:
-            self.positions[symbol] = updated
-            return updated
+            if current["size"] == 0:
+                # New position
+                self.positions[symbol] = {
+                    "side": "long" if new_size > 0 else "short",
+                    "size": new_size,
+                    "entry_time": time.time(),
+                    "entry_price": price
+                }
+            else:
+                self.positions[symbol]["size"] = new_size
+            return new_size
 
     @staticmethod
     def _is_opening_trade(side: str, updated_position: float) -> bool:
@@ -151,8 +162,9 @@ class TradingEngine:
 
             exit_side = triggered["exit_side"]
             exit_size = float(triggered["size"])
-            updated_position = self._update_local_position(symbol, exit_side, exit_size)
-            self.db.save_trade(symbol, exit_side, exit_size, float(triggered.get("trigger_price", current_price)))
+            exit_price = float(triggered.get("trigger_price", current_price))
+            updated_position = self._update_local_position(symbol, exit_side, exit_size, exit_price)
+            self.db.save_trade(symbol, exit_side, exit_size, exit_price)
             if updated_position == 0:
                 self.execution_engine.clear_protection(symbol)
             logger.info("Protection exit executed: %s", triggered)
@@ -190,7 +202,7 @@ class TradingEngine:
             logger.exception("Order placement failed for %s %s: %s", signal.symbol, side, exc)
             return
 
-        updated_position = self._update_local_position(signal.symbol, side, size)
+        updated_position = self._update_local_position(signal.symbol, side, size, signal.price)
         if self.settings.mode == "live":
             if updated_position == 0:
                 self.execution_engine.clear_protection(signal.symbol)
@@ -200,12 +212,42 @@ class TradingEngine:
         self.db.save_trade(signal.symbol, side, size, signal.price)
         logger.info("Placed order %s", order)
 
+    def _check_time_based_close(self):
+        """Close positions that have been open longer than max_holding_time_s."""
+        now = time.time()
+        max_time = self.settings.max_holding_time_s
+        for symbol, pos in list(self.positions.items()):
+            elapsed = now - pos["entry_time"]
+            if elapsed > max_time:
+                logger.warning("Closing %s due to max holding time: %s > %s", symbol, elapsed, max_time)
+                exit_side = "sell" if pos["size"] > 0 else "buy"
+                self.execution_engine.execute_market_order(
+                    symbol=symbol,
+                    side=exit_side,
+                    size=abs(pos["size"]),
+                    reduce_only=True
+                )
+                self.positions.pop(symbol)
+                self.db.save_trade(symbol, exit_side, abs(pos["size"]), 0.0) # Price unknown here, usually updated by trigger
+
     def run(self, max_iterations: Optional[int] = None):
         logger.info("Starting trading engine in %s mode", self.settings.mode)
         iteration = 0
         while max_iterations is None or iteration < max_iterations:
             market_data = self._fetch_market_snapshot()
+            
+            # Funding awareness
+            if self.settings.enable_funding_awareness:
+                for symbol, data in market_data.items():
+                    ticker = data.get("ticker", {})
+                    funding_rate = ticker.get("result", {}).get("funding_rate") or ticker.get("funding_rate")
+                    if funding_rate:
+                        fr = float(funding_rate)
+                        if abs(fr) > self.settings.funding_alert_threshold:
+                            logger.warning("High funding rate for %s: %.4f%%", symbol, fr * 100)
+
             self._process_protection_triggers(market_data)
+            self._check_time_based_close()
             signals = self.strategy.generate(market_data)
 
             for signal in signals:

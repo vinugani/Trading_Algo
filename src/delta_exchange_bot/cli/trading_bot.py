@@ -81,14 +81,17 @@ class MainTradingBot:
         ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1] if len(close) >= 20 else float("nan")
 
         delta = close.diff()
-        gains = delta.clip(lower=0)
-        losses = -delta.clip(upper=0)
-        avg_gain = gains.rolling(window=14, min_periods=14).mean().iloc[-1]
-        avg_loss = losses.rolling(window=14, min_periods=14).mean().iloc[-1]
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        
+        # Wilder's Smoothing is exactly equivalent to EMA with alpha = 1 / period
+        avg_gain = gain.ewm(alpha=1/14, adjust=False, min_periods=14).mean().iloc[-1]
+        avg_loss = loss.ewm(alpha=1/14, adjust=False, min_periods=14).mean().iloc[-1]
+        
         if pd.isna(avg_gain) or pd.isna(avg_loss):
             rsi = float("nan")
         elif avg_loss == 0:
-            rsi = 100.0
+            rsi = 100.0 if avg_gain > 0 else 50.0
         else:
             rs = avg_gain / avg_loss
             rsi = 100.0 - (100.0 / (1.0 + rs))

@@ -130,6 +130,25 @@ class OrderExecutionEngine:
     ) -> ProtectionState:
         state = self._ensure_state(symbol, position_side, size, reference_price=stop_price, trade_id=trade_id)
         state.stop_loss = stop_price
+        
+        if self.client:
+            # Place native stop market order on exchange
+            exit_side = "sell" if position_side.lower() == "long" else "buy"
+            client_order_id = self._safe_client_order_id(f"{trade_id or symbol}-sl")
+            try:
+                self.client.place_order(
+                    symbol=symbol,
+                    side=exit_side,
+                    size=size,
+                    stop_price=stop_price,
+                    order_type="stop_market_order",
+                    reduce_only=True,
+                    client_order_id=client_order_id
+                )
+                logger.info("Placed native stop-loss order: symbol=%s stop=%s", symbol, stop_price)
+            except Exception as e:
+                logger.error("Failed to place native stop-loss: %s. Falling back to in-memory protection.", e)
+
         logger.info("Registered stop loss: symbol=%s side=%s stop=%s size=%s", symbol, state.side, stop_price, size)
         return state
 
@@ -143,6 +162,25 @@ class OrderExecutionEngine:
     ) -> ProtectionState:
         state = self._ensure_state(symbol, position_side, size, reference_price=target_price, trade_id=trade_id)
         state.take_profit = target_price
+
+        if self.client:
+            # Place native take profit market order (or limit depending on exchange support, stop_market with stop_price works for TP too if triggered)
+            exit_side = "sell" if position_side.lower() == "long" else "buy"
+            client_order_id = self._safe_client_order_id(f"{trade_id or symbol}-tp")
+            try:
+                self.client.place_order(
+                    symbol=symbol,
+                    side=exit_side,
+                    size=size,
+                    stop_price=target_price,
+                    order_type="take_profit_market_order",
+                    reduce_only=True,
+                    client_order_id=client_order_id
+                )
+                logger.info("Placed native take-profit order: symbol=%s target=%s", symbol, target_price)
+            except Exception as e:
+                logger.error("Failed to place native take-profit: %s. Falling back to in-memory protection.", e)
+
         logger.info("Registered take profit: symbol=%s side=%s target=%s size=%s", symbol, state.side, target_price, size)
         return state
 

@@ -42,12 +42,19 @@ class RSIScalpingStrategy(Strategy):
             return None
 
         deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
-        window = deltas[-period:]
-        gains = [d for d in window if d > 0]
-        losses = [-d for d in window if d < 0]
 
-        avg_gain = sum(gains) / period if gains else 0.0
-        avg_loss = sum(losses) / period if losses else 0.0
+        # Wilder's smoothing — matches TradingView and all standard charting platforms
+        gains = [d if d > 0 else 0.0 for d in deltas]
+        losses = [-d if d < 0 else 0.0 for d in deltas]
+
+        # Seed with simple average of first `period` values
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+
+        # Apply Wilder's smoothing for all remaining values
+        for i in range(period, len(deltas)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
 
         if avg_loss == 0:
             return 100.0

@@ -214,6 +214,11 @@ class DeltaClient:
             return str(max(1, int(round(size_f))))
         return str(size_f)
 
+    def get_funding_rate(self, symbol: str) -> Dict[str, Any]:
+        """Fetch current funding rate for a symbol."""
+        # Delta v2 endpoint for funding rates
+        return self._request("GET", f"/v2/products/{symbol}/ticker", auth=False)
+
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         return self._request("GET", f"/v2/tickers/{symbol}", auth=False)
 
@@ -248,6 +253,7 @@ class DeltaClient:
         side: str,
         size: float,
         price: Optional[float] = None,
+        stop_price: Optional[float] = None,
         order_type: str = "limit_order",
         time_in_force: Optional[str] = None,
         post_only: bool = False,
@@ -266,6 +272,8 @@ class DeltaClient:
         }
         if price is not None:
             body["limit_price"] = str(price)
+        if stop_price is not None:
+            body["stop_price"] = str(stop_price)
         if time_in_force is not None:
             body["time_in_force"] = time_in_force
         if client_order_id:

@@ -62,7 +62,7 @@ def test_execute_signal_live_places_order_with_delta_client(monkeypatch):
     assert captured["symbol"] == "BTCUSD"
     assert captured["side"] == "buy"
     assert captured["order_type"] == "limit_order"
-    assert engine.positions["BTCUSD"] > 0
+    assert engine.positions["BTCUSD"]["size"] > 0
     assert len(engine.db.trades) == 1
 
 
@@ -86,7 +86,7 @@ def test_process_protection_triggers_updates_position_and_db(monkeypatch):
     settings = Settings(mode="live", trade_symbols=["BTCUSD"], api_key="key", api_secret="secret")
     engine = TradingEngine(settings)
     engine.db = DummyDB()
-    engine.positions["BTCUSD"] = 2.0
+    engine.positions["BTCUSD"] = {"size": 2.0, "side": "long", "entry_time": 1000.0, "entry_price": 100.0}
 
     monkeypatch.setattr(
         engine.execution_engine,

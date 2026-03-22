@@ -119,7 +119,7 @@ PURPOSE_MAP = {
     },
     "Dockerfile": {
         "purpose": "Container build/run recipe.",
-        "how": "Python 3.11 slim, installs requirements.txt, runs scripts/run_bot.py.",
+        "how": "Python 3.12 slim, installs requirements.txt, runs scripts/run_bot.py.",
         "change": "Edit base image, install process, and CMD here.",
     },
 }

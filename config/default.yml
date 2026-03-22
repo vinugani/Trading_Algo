@@ -8,7 +8,5 @@ app:
 
 delta:
   api_url: "https://cdn-ind.testnet.deltaex.org"
-  api_key: ""
-  api_secret: ""
-  ws_url: "wss://cdn-ind.testnet.deltaex.org/socket.io/"
+  ws_url: "wss://testnet-socket.india.delta.exchange"
   enable_risk: true
