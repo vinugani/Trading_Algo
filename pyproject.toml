@@ -10,6 +10,7 @@ packages = [{include = "delta_exchange_bot", from = "src"}]
 python = "^3.12"
 requests = "^2.31"
 websocket-client = "^1.6"
+websockets = "^16.0"
 pydantic = "^2.8"
 pydantic-settings = "^2.8"
 tenacity = "^8.2"

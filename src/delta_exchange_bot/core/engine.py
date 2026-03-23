@@ -1,5 +1,7 @@
-import time
 import logging
+import asyncio
+import contextlib
+import time
 import uuid
 import pandas as pd
 from collections import defaultdict, deque
@@ -39,13 +41,20 @@ class TradingEngine:
         self.current_equity = 100000.0
         self.positions: dict[str, dict] = {} # symbol -> {side, size, entry_time, entry_price}
         self._price_history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=50))
+        self._market_data_degraded = False
         
         # WebSocket Setup
         self.ws_manager = WebSocketManager(
             ws_url=settings.ws_url,
             api_key=settings.api_key,
             api_secret=settings.api_secret,
-            on_message_callback=self._on_ws_message
+            on_message=self._on_ws_message,
+            on_connect=self._on_ws_connect,
+            on_disconnect=self._on_ws_disconnect,
+            on_alert=self._on_ws_alert,
+            ping_interval_s=settings.websocket_ping_interval_s,
+            ping_timeout_s=settings.websocket_ping_timeout_s,
+            stale_after_s=settings.websocket_stale_after_s,
         )
         for symbol in settings.trade_symbols:
             self.ws_manager.add_subscription("v2/ticker", [symbol])
@@ -108,6 +117,21 @@ class TradingEngine:
                 return parsed
         return 0.0
 
+    def _on_ws_connect(self):
+        self._market_data_degraded = False
+        logger.info("Realtime market data restored on WebSocket feed")
+
+    def _on_ws_disconnect(self, reason: str = ""):
+        self._market_data_degraded = True
+        logger.warning("Realtime market data WebSocket disconnected: %s", reason or "unknown reason")
+
+    def _on_ws_alert(self, level: str, message: str, context: dict | None = None):
+        log_fn = logger.warning if level.lower() == "warning" else logger.info
+        if context:
+            log_fn("Market data alert: %s | %s", message, context)
+        else:
+            log_fn("Market data alert: %s", message)
+
     def _on_ws_message(self, data: dict):
         """Handle incoming WebSocket messages."""
         msg_type = data.get("type")
@@ -131,27 +155,21 @@ class TradingEngine:
         elif msg_type == "executions":
             self._handle_execution_report(data)
 
-            market_data[symbol] = {
-                "prices": history, 
-                "ticker": {},
-                "df": pd.DataFrame(list(self._ohlcv_history[symbol])) if self._ohlcv_history[symbol] else None
-            }
-        return market_data
-
     def _fetch_market_snapshot(self) -> Dict[str, dict]:
         """Fetch latest prices and build market data snapshot."""
         market_data = {}
+        use_rest_fallback = self._market_data_degraded or not self.ws_manager.is_healthy
         for symbol in self.settings.trade_symbols:
             history = list(self._price_history[symbol])
-            if not history:
-                # Fallback to REST for initial data
+            if use_rest_fallback or not history:
                 try:
                     ticker = self.api.get_ticker(symbol)
                     price = self._extract_price(ticker)
                     if price > 0:
-                        history = [price]
+                        self._price_history[symbol].append(price)
+                        history = list(self._price_history[symbol])
                 except Exception as e:
-                    logger.error(f"Error fetching initial price for {symbol}: {e}")
+                    logger.error(f"Error fetching fallback price for {symbol}: {e}")
                     continue
 
             market_data[symbol] = {
@@ -379,34 +397,38 @@ class TradingEngine:
 
     async def run(self, max_iterations: Optional[int] = None):
         logger.info("Starting trading engine in %s mode", self.settings.mode)
-        self.ws_manager.start()
+        await self.ws_manager.connect()
         
         # Start Reconciliation background task
         recon_task = asyncio.create_task(self.reconciliation_service.start())
         
         iteration = 0
-        while max_iterations is None or iteration < max_iterations:
-            market_data = self._fetch_market_snapshot()
-            
-            # Funding awareness
-            if self.settings.enable_funding_awareness:
-                for symbol, data in market_data.items():
-                    ticker = data.get("ticker", {})
-                    funding_rate = ticker.get("result", {}).get("funding_rate") or ticker.get("funding_rate")
-                    if funding_rate:
-                        fr = float(funding_rate)
-                        if abs(fr) > self.settings.funding_alert_threshold:
-                            logger.warning("High funding rate for %s: %.4f%%", symbol, fr * 100)
+        try:
+            while max_iterations is None or iteration < max_iterations:
+                market_data = self._fetch_market_snapshot()
+                
+                # Funding awareness
+                if self.settings.enable_funding_awareness:
+                    for symbol, data in market_data.items():
+                        ticker = data.get("ticker", {})
+                        funding_rate = ticker.get("result", {}).get("funding_rate") or ticker.get("funding_rate")
+                        if funding_rate:
+                            fr = float(funding_rate)
+                            if abs(fr) > self.settings.funding_alert_threshold:
+                                logger.warning("High funding rate for %s: %.4f%%", symbol, fr * 100)
 
-            self._process_protection_triggers(market_data)
-            self._check_time_based_close()
-            signals = self.strategy.generate(market_data)
+                self._process_protection_triggers(market_data)
+                self._check_time_based_close()
+                signals = self.strategy.generate(market_data)
 
-            for signal in signals:
-                self._execute_signal(signal)
+                for signal in signals:
+                    self._execute_signal(signal)
 
-            iteration += 1
-            await asyncio.sleep(self.settings.trade_frequency_s)
-
-        recon_task.cancel()
-        logger.info("Trading engine stopped after %s iterations", iteration)
+                iteration += 1
+                await asyncio.sleep(self.settings.trade_frequency_s)
+        finally:
+            recon_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await recon_task
+            await self.ws_manager.disconnect()
+            logger.info("Trading engine stopped after %s iterations", iteration)

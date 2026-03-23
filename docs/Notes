@@ -75,3 +75,8 @@ count = db.execute('SELECT COUNT(*) FROM trades').fetchone()[0]
 print(f'Total paper trades so far: {count}')
 db.close()
 "
+
+
+python -m pytest tests\unit\test_websocket_manager.py -q
+python -m pytest tests\unit\test_engine.py -q
+python -m pytest tests\unit\test_settings.py -q
