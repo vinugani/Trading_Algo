@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, select, update, delete
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 
-from delta_exchange_bot.persistence.models import Base, Trade, Position, Order, Signal, ExecutionLog, OrderStatus, PositionSide, TradeStatus
+from delta_exchange_bot.persistence.models import Base, Trade, Position, Order, Signal, ExecutionLog, PerformanceMetric, OrderStatus, PositionSide, TradeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -293,3 +293,58 @@ class DatabaseManager:
                 }
                 for t in trades
             ]
+
+    def save_performance_metrics(self, **kwargs):
+        """Saves a snapshot of bot performance."""
+        with self.get_session() as session:
+            try:
+                metric = PerformanceMetric(
+                    mode=kwargs.get("mode"),
+                    total_trades=kwargs.get("total_trades"),
+                    win_rate=kwargs.get("win_rate"),
+                    profit_factor=kwargs.get("profit_factor"),
+                    max_drawdown=kwargs.get("max_drawdown"),
+                    realized_pnl=kwargs.get("realized_pnl"),
+                    unrealized_pnl=kwargs.get("unrealized_pnl"),
+                    metadata_json=kwargs.get("metadata", {})
+                )
+                session.add(metric)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error saving performance metrics: {e}")
+
+    # --- Legacy Aliases for Professional Bot Compatibility ---
+
+    def upsert_open_position_state(self, **kwargs):
+        """Alias for update_position."""
+        # Map old argument names if necessary
+        data = {
+            "symbol": kwargs.get("symbol"),
+            "trade_id": kwargs.get("trade_id"),
+            "side": kwargs.get("side"),
+            "size": kwargs.get("size"),
+            "avg_entry_price": kwargs.get("entry_price"), # legacy used entry_price
+            "stop_loss": kwargs.get("stop_loss"),
+            "take_profit": kwargs.get("take_profit")
+        }
+        self.update_position(data)
+
+    def close_trade_record(self, trade_id: str, exit_price: float):
+        """Alias for close_trade."""
+        self.close_trade(trade_id, exit_price)
+
+    def save_execution(self, **kwargs):
+        """Alias for log_execution."""
+        self.log_execution({
+            "execution_id": kwargs.get("execution_id"),
+            "trade_id": kwargs.get("trade_id"),
+            "symbol": kwargs.get("symbol"),
+            "event_type": kwargs.get("event_type"),
+            "side": kwargs.get("side"),
+            "size": kwargs.get("size"),
+            "price": kwargs.get("price"),
+            "status": kwargs.get("status"),
+            "reason": kwargs.get("reason"),
+            "metadata": kwargs.get("metadata")
+        })

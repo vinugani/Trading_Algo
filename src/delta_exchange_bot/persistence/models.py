@@ -116,3 +116,17 @@ class ExecutionLog(Base):
     reason = Column(Text)
     metadata_json = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+class PerformanceMetric(Base):
+    __tablename__ = "performance_metrics"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    mode = Column(String(16), index=True)
+    total_trades = Column(Integer)
+    win_rate = Column(Float)
+    profit_factor = Column(Float)
+    max_drawdown = Column(Float)
+    realized_pnl = Column(Float)
+    unrealized_pnl = Column(Float)
+    metadata_json = Column(JSON)
