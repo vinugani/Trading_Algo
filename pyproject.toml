@@ -16,6 +16,8 @@ tenacity = "^8.2"
 structlog = "^23.3"
 loguru = "^0.7"
 psycopg = {version = "^3.1", extras = ["binary"]}
+sqlalchemy = "^2.0"
+psycopg2-binary = "^2.9"
 pandas = "^3.0.1"
 prometheus-client = "^0.24.1"
 pyyaml = "^6.0.2"

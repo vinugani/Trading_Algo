@@ -32,7 +32,7 @@ if str(SRC) not in sys.path:
 # ── Bot module imports ─────────────────────────────────────────────────────────
 try:
     from delta_exchange_bot.core.settings import Settings
-    from delta_exchange_bot.persistence.db import StateDB
+    from delta_exchange_bot.persistence.db import DatabaseManager
     BOT_MODULES_OK = True
     _import_error  = ""
 except Exception as exc:
@@ -61,10 +61,11 @@ def _settings() -> Optional[Settings]:
     except Exception:
         return None
 
-def _db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(ROOT / "state.db"))
-    conn.row_factory = sqlite3.Row
-    return conn
+def _get_db() -> Optional[DatabaseManager]:
+    s = _settings()
+    if not s:
+        return None
+    return DatabaseManager(s.postgres_dsn)
 
 def _bot_running() -> bool:
     return _bot_proc is not None and _bot_proc.poll() is None
@@ -119,8 +120,9 @@ def get_status():
 
     open_pos = 0
     try:
-        with _db_conn() as c:
-            open_pos = c.execute("SELECT COUNT(*) FROM open_position_state").fetchone()[0]
+        db = _get_db()
+        if db:
+            open_pos = len(db.get_all_active_positions())
     except Exception:
         pass
 
@@ -278,13 +280,16 @@ def run_preflight():
     else:
         results.append({"name":"risk_limits","status":"WARN","details":"Could not load settings"})
 
-    # state.db
+    # database
     try:
-        with _db_conn() as c:
-            cnt = c.execute("SELECT COUNT(*) FROM open_position_state").fetchone()[0]
-        results.append({"name":"state_db","status":"PASS","details":f"state.db OK — {cnt} open position(s) recovered"})
+        db = _get_db()
+        if db:
+            cnt = len(db.get_all_active_positions())
+            results.append({"name":"database","status":"PASS","details":f"PostgreSQL OK — {cnt} open position(s) recovered"})
+        else:
+             results.append({"name":"database","status":"FAIL","details":"Could not initialize DatabaseManager"})
     except Exception as exc:
-        results.append({"name":"state_db","status":"FAIL","details":str(exc)})
+        results.append({"name":"database","status":"FAIL","details":str(exc)})
 
     # public API
     if s:
@@ -329,21 +334,23 @@ def run_preflight():
 # ══════════════════════════════════════════════════════════════════════════════
 @app.get("/api/positions")
 def get_positions():
+    db = _get_db()
+    if not db:
+        raise HTTPException(500, "Database unavailable")
+    
     try:
-        with _db_conn() as c:
-            rows = c.execute("SELECT * FROM open_position_state").fetchall()
+        rows = db.get_all_active_positions()
     except Exception as exc:
         raise HTTPException(500, str(exc))
 
     positions = []
-    for r in rows:
-        d = dict(r)
-        entry  = float(d.get("entry_price") or 0)
+    for d in rows:
+        entry  = float(d.get("avg_entry_price") or 0)
         size   = float(d.get("size") or 0)
         side   = d.get("side","")
-        sl     = d.get("stop_loss")
-        tp     = d.get("take_profit")
-        trail  = d.get("trailing_stop_pct")
+        # sl     = d.get("stop_loss")
+        # tp     = d.get("take_profit")
+        
         # Estimated mark — real mark would come from exchange ticker
         mark   = entry * (1.001 if side == "long" else 0.999)
         pnl    = (mark - entry) * size if side == "long" else (entry - mark) * size
@@ -358,10 +365,7 @@ def get_positions():
             "mark_price":       round(mark, 6),
             "unrealized_pnl":   round(pnl, 4),
             "pnl_pct":          round(pnl_pct, 3),
-            "stop_loss":        float(sl)   if sl    is not None else None,
-            "take_profit":      float(tp)   if tp    is not None else None,
-            "trailing_stop_pct":float(trail) if trail is not None else None,
-            "mode":             d.get("mode",""),
+            "mode":             "live", # Default to live for dashboard view
             "updated_at":       d.get("updated_at",""),
         })
 
@@ -372,25 +376,14 @@ def get_positions():
 # EXECUTION HISTORY  — reads execution_logs from state.db
 # ══════════════════════════════════════════════════════════════════════════════
 @app.get("/api/trades/history")
-def get_history(limit: int = Query(100, ge=1, le=500), mode: str = Query("paper")):
+def get_history(limit: int = Query(100, ge=1, le=500)):
+    db = _get_db()
+    if not db:
+        raise HTTPException(500, "Database unavailable")
     try:
-        with _db_conn() as c:
-            rows = c.execute(
-                "SELECT * FROM execution_logs WHERE mode=? ORDER BY id DESC LIMIT ?",
-                (mode, limit)
-            ).fetchall()
+        trades = db.get_execution_history(limit=limit)
     except Exception as exc:
         raise HTTPException(500, str(exc))
-
-    trades = []
-    for r in rows:
-        d = dict(r)
-        meta = {}
-        try:
-            meta = json.loads(d.pop("metadata_json") or "{}")
-        except Exception:
-            d.pop("metadata_json", None)
-        trades.append({**d, "meta": meta})
 
     return {"trades": trades, "count": len(trades),
             "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -438,17 +431,14 @@ def get_stats(mode: str = Query("paper")):
 # ══════════════════════════════════════════════════════════════════════════════
 @app.get("/api/signals")
 def get_signals(limit: int = Query(40, ge=1, le=200)):
+    db = _get_db()
+    if not db:
+        raise HTTPException(500, "Database unavailable")
     try:
-        with _db_conn() as c:
-            rows = c.execute(
-                """SELECT signal_id, strategy_name, regime, symbol, action,
-                          confidence, price, stop_loss, take_profit, trailing_stop_pct, ts
-                   FROM signals ORDER BY id DESC LIMIT ?""",
-                (limit,)
-            ).fetchall()
+        signals = db.get_signals_history(limit=limit)
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    return {"signals": [dict(r) for r in rows], "count": len(rows),
+    return {"signals": signals, "count": len(signals),
             "timestamp": datetime.now(timezone.utc).isoformat()}
 
 # ══════════════════════════════════════════════════════════════════════════════

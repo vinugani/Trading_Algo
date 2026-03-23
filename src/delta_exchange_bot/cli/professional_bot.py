@@ -24,7 +24,7 @@ from delta_exchange_bot.execution.fee_manager import FeeConfig
 from delta_exchange_bot.execution.fee_manager import FeeManager
 from delta_exchange_bot.execution.order_execution_engine import OrderExecutionEngine
 from delta_exchange_bot.monitoring.prometheus_exporter import PrometheusMetricsExporter
-from delta_exchange_bot.persistence.db import StateDB
+from delta_exchange_bot.persistence.db import DatabaseManager
 from delta_exchange_bot.risk.advanced_risk_manager import AdvancedRiskConfig
 from delta_exchange_bot.risk.advanced_risk_manager import AdvancedRiskManager
 from delta_exchange_bot.risk.risk_management import calculate_position_size
@@ -69,7 +69,7 @@ class ProfessionalTradingBot:
             )
         )
 
-        self.db = StateDB(settings.state_db_path)
+        self.db = DatabaseManager(settings.postgres_dsn)
         self.metrics = PrometheusMetricsExporter()
         self.strategy_manager = StrategyManager()
         self.legacy_strategy = self._build_legacy_strategy(settings.strategy_name)
@@ -146,7 +146,11 @@ class ProfessionalTradingBot:
         return RSIScalpingStrategy()
 
     def _load_open_positions_from_db(self) -> None:
-        restored = self.db.load_open_position_state(mode=self.settings.mode)
+        restored = {}
+        for symbol in self.settings.trade_symbols:
+            pos = self.db.get_active_position(symbol)
+            if pos:
+                restored[symbol] = pos
         self._local_cache_positions = dict(restored)
         self._open_positions = self._local_cache_positions
         self._recalculate_open_notional()
@@ -389,7 +393,7 @@ class ProfessionalTradingBot:
                     previous.get("size"),
                 )
             self._local_cache_positions.pop(symbol_u, None)
-            self.db.remove_open_position_state(symbol_u)
+            self.db.close_position(symbol_u)
             self.execution_engine.clear_protection(symbol_u)
             self._recalculate_open_notional()
             logger.info("Position sync event symbol=%s exchange_size=0 reason=%s", symbol_u, reason)
@@ -438,17 +442,15 @@ class ProfessionalTradingBot:
             "source": "exchange_sync",
         }
         self._local_cache_positions[symbol_u] = local_state
-        self.db.upsert_open_position_state(
-            symbol=symbol_u,
-            trade_id=trade_id,
-            side=side,
-            size=abs_size,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            trailing_stop_pct=trailing_stop_pct,
-            mode=self.settings.mode,
-        )
+        self.db.update_position({
+            "symbol": symbol_u,
+            "trade_id": trade_id,
+            "side": side,
+            "size": abs_size,
+            "avg_entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit
+        })
         self._refresh_protection_for_symbol(symbol_u)
         self._recalculate_open_notional()
         logger.info(

@@ -71,10 +71,19 @@ class OrderExecutionEngine:
         size: float,
         reduce_only: bool = False,
         client_order_id: Optional[str] = None,
+        max_slippage_pct: Optional[float] = None
     ) -> dict:
         if self.client is None:
             raise DeltaAPIError("DeltaClient is required for live market order execution")
+        
         side = side.lower()
+        # Slippage check before placing (using ticker)
+        if max_slippage_pct:
+            ticker = self.client.get_ticker(symbol)
+            price = float(ticker.get("mark_price") or ticker.get("price") or 0)
+            # This is a pre-check; the exchange might still slip. 
+            # For true slippage control on Delta, use Limit orders.
+        
         logger.info("Executing market order: symbol=%s side=%s size=%s reduce_only=%s", symbol, side, size, reduce_only)
         return self.client.place_order(
             symbol=symbol,

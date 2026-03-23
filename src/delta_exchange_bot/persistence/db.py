@@ -1,501 +1,295 @@
-import sqlite3
+import logging
 import json
-from pathlib import Path
-from typing import Dict
-from typing import Optional
+from datetime import datetime
+from typing import Dict, List, Optional, Any
 
+from sqlalchemy import create_engine, select, update, delete
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.exc import IntegrityError
 
-class StateDB:
-    def __init__(self, path: str = "state.db"):
-        self._path = Path(path)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        # WAL mode allows concurrent readers + one writer without locking errors.
-        # busy_timeout gives writers up to 5 s to acquire the lock before raising.
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
+from delta_exchange_bot.persistence.models import Base, Trade, Position, Order, Signal, ExecutionLog, OrderStatus, PositionSide, TradeStatus
+
+logger = logging.getLogger(__name__)
+
+class DatabaseManager:
+    """PostgreSQL Database Manager using SQLAlchemy."""
+    
+    def __init__(self, dsn: str):
+        if dsn.startswith("sqlite"):
+            self.engine = create_engine(dsn)
+        else:
+            self.engine = create_engine(
+                dsn,
+                pool_pre_ping=True,
+                pool_size=10,
+                max_overflow=20
+            )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
         self._create_tables()
 
     def _create_tables(self):
-        with self._conn:
-            self._conn.execute("""CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, symbol TEXT, side TEXT, size REAL, price REAL, ts DATETIME DEFAULT CURRENT_TIMESTAMP)""")
-            self._conn.execute("""CREATE TABLE IF NOT EXISTS positions (symbol TEXT PRIMARY KEY, size REAL, avg_price REAL)""")
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS orders (
-                    id INTEGER PRIMARY KEY,
-                    trade_id TEXT,
-                    order_id TEXT,
-                    client_order_id TEXT,
-                    symbol TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    order_type TEXT NOT NULL,
-                    size REAL NOT NULL,
-                    price REAL,
-                    status TEXT NOT NULL,
-                    metadata_json TEXT,
-                    ts DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS signals (
-                    id INTEGER PRIMARY KEY,
-                    signal_id TEXT UNIQUE,
-                    strategy_name TEXT,
-                    regime TEXT,
-                    symbol TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    price REAL NOT NULL,
-                    stop_loss REAL,
-                    take_profit REAL,
-                    trailing_stop_pct REAL,
-                    metadata_json TEXT,
-                    ts DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS performance_metrics (
-                    id INTEGER PRIMARY KEY,
-                    mode TEXT NOT NULL,
-                    total_trades INTEGER NOT NULL,
-                    win_rate REAL NOT NULL,
-                    profit_factor REAL NOT NULL,
-                    max_drawdown REAL NOT NULL,
-                    realized_pnl REAL NOT NULL,
-                    unrealized_pnl REAL NOT NULL,
-                    metadata_json TEXT,
-                    ts DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS execution_logs (
-                    id INTEGER PRIMARY KEY,
-                    trade_id TEXT NOT NULL,
-                    execution_id TEXT NOT NULL UNIQUE,
-                    symbol TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    size REAL NOT NULL,
-                    price REAL,
-                    event_type TEXT NOT NULL,
-                    order_type TEXT,
-                    mode TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason TEXT,
-                    client_order_id TEXT,
-                    exchange_order_id TEXT,
-                    metadata_json TEXT,
-                    ts DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            # Migration: drop the legacy UNIQUE index on client_order_id if it
-            # still exists from an older schema.  client_order_id is not
-            # globally unique — the same prefix can appear across separate paper
-            # sessions.  execution_id (uuid-based) provides the uniqueness
-            # guarantee we actually need.
+        """Create tables if they don't exist."""
+        try:
+            Base.metadata.create_all(bind=self.engine)
+            logger.info("Database tables verified/created successfully.")
+        except Exception as e:
+            logger.error(f"Error creating database tables: {e}")
+            raise
+
+    def get_session(self) -> Session:
+        return self.SessionLocal()
+
+    # --- Signal Operations ---
+
+    def save_signal(self, signal_data: dict) -> None:
+        with self.get_session() as session:
             try:
-                self._conn.execute(
-                    "DROP INDEX IF EXISTS sqlite_autoindex_execution_logs_2"
+                signal = Signal(
+                    signal_id=signal_data["signal_id"],
+                    strategy_name=signal_data["strategy_name"],
+                    symbol=signal_data["symbol"],
+                    action=signal_data["action"],
+                    confidence=signal_data["confidence"],
+                    price=signal_data["price"],
+                    stop_loss=signal_data.get("stop_loss"),
+                    take_profit=signal_data.get("take_profit"),
+                    regime=signal_data.get("regime"),
+                    metadata_json=signal_data.get("metadata", {})
                 )
-            except Exception:
-                pass
-            # Re-create as a plain non-unique index for query performance.
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_execution_logs_client_order_id "
-                "ON execution_logs(client_order_id)"
-            )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_execution_logs_trade_id ON execution_logs(trade_id)"
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS open_position_state (
-                    symbol TEXT PRIMARY KEY,
-                    trade_id TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    size REAL NOT NULL,
-                    entry_price REAL NOT NULL,
-                    stop_loss REAL,
-                    take_profit REAL,
-                    trailing_stop_pct REAL,
-                    mode TEXT NOT NULL,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trade_records (
-                    trade_id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    strategy_name TEXT,
-                    side TEXT NOT NULL,
-                    size REAL NOT NULL,
-                    entry_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    exit_time DATETIME,
-                    entry_price REAL,
-                    exit_price REAL,
-                    pnl_raw REAL,
-                    pnl_pct REAL,
-                    duration_s REAL,
-                    status TEXT DEFAULT 'open',
-                    metadata_json TEXT
-                )
-                """
-            )
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_symbol ON trade_records(symbol)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_status ON trade_records(status)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_trade_id ON orders(trade_id)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_symbol_ts ON signals(symbol, ts)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_perf_mode_ts ON performance_metrics(mode, ts)")
+                session.add(signal)
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                logger.warning(f"Signal {signal_data['signal_id']} already exists.")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error saving signal: {e}")
 
-    def save_trade(self, symbol: str, side: str, size: float, price: float):
-        with self._conn:
-            self._conn.execute("INSERT INTO trades (symbol, side, size, price) VALUES (?, ?, ?, ?)", (symbol, side, size, price))
+    # --- Position Operations ---
 
-    def save_order_record(
-        self,
-        *,
-        symbol: str,
-        side: str,
-        order_type: str,
-        size: float,
-        status: str,
-        trade_id: Optional[str] = None,
-        order_id: Optional[str] = None,
-        client_order_id: Optional[str] = None,
-        price: Optional[float] = None,
-        metadata: Optional[dict] = None,
-    ) -> None:
-        metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO orders (
-                    trade_id, order_id, client_order_id, symbol, side, order_type, size, price, status, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (trade_id, order_id, client_order_id, symbol, side, order_type, size, price, status, metadata_json),
-            )
-
-    def save_signal(
-        self,
-        *,
-        signal_id: str,
-        strategy_name: str,
-        symbol: str,
-        action: str,
-        confidence: float,
-        price: float,
-        regime: Optional[str] = None,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        trailing_stop_pct: Optional[float] = None,
-        metadata: Optional[dict] = None,
-    ) -> None:
-        metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO signals (
-                    signal_id, strategy_name, regime, symbol, action, confidence, price,
-                    stop_loss, take_profit, trailing_stop_pct, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    signal_id,
-                    strategy_name,
-                    regime,
-                    symbol,
-                    action,
-                    confidence,
-                    price,
-                    stop_loss,
-                    take_profit,
-                    trailing_stop_pct,
-                    metadata_json,
-                ),
-            )
-
-    def save_performance_metrics(
-        self,
-        *,
-        mode: str,
-        total_trades: int,
-        win_rate: float,
-        profit_factor: float,
-        max_drawdown: float,
-        realized_pnl: float,
-        unrealized_pnl: float,
-        metadata: Optional[dict] = None,
-    ) -> None:
-        metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO performance_metrics (
-                    mode, total_trades, win_rate, profit_factor, max_drawdown, realized_pnl, unrealized_pnl, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (mode, total_trades, win_rate, profit_factor, max_drawdown, realized_pnl, unrealized_pnl, metadata_json),
-            )
-
-    def save_execution(
-        self,
-        *,
-        trade_id: str,
-        execution_id: str,
-        symbol: str,
-        side: str,
-        size: float,
-        price: Optional[float],
-        event_type: str,
-        mode: str,
-        status: str,
-        order_type: Optional[str] = None,
-        reason: Optional[str] = None,
-        client_order_id: Optional[str] = None,
-        exchange_order_id: Optional[str] = None,
-        metadata: Optional[dict] = None,
-    ) -> bool:
-        """Persist execution log row. Returns True when inserted, False if duplicate."""
-        metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
-        with self._conn:
-            cursor = self._conn.execute(
-                """
-                INSERT OR IGNORE INTO execution_logs (
-                    trade_id, execution_id, symbol, side, size, price, event_type,
-                    order_type, mode, status, reason, client_order_id, exchange_order_id, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    trade_id,
-                    execution_id,
-                    symbol,
-                    side,
-                    size,
-                    price,
-                    event_type,
-                    order_type,
-                    mode,
-                    status,
-                    reason,
-                    client_order_id,
-                    exchange_order_id,
-                    metadata_json,
-                ),
-            )
-        return cursor.rowcount == 1
-
-    def get_executions_by_trade_id(self, trade_id: str) -> list[dict]:
-        cursor = self._conn.execute(
-            """
-            SELECT trade_id, execution_id, symbol, side, size, price, event_type, order_type,
-                   mode, status, reason, client_order_id, exchange_order_id, metadata_json, ts
-            FROM execution_logs
-            WHERE trade_id = ?
-            ORDER BY id ASC
-            """,
-            (trade_id,),
-        )
-        out = []
-        for row in cursor.fetchall():
-            out.append(
-                {
-                    "trade_id": row[0],
-                    "execution_id": row[1],
-                    "symbol": row[2],
-                    "side": row[3],
-                    "size": row[4],
-                    "price": row[5],
-                    "event_type": row[6],
-                    "order_type": row[7],
-                    "mode": row[8],
-                    "status": row[9],
-                    "reason": row[10],
-                    "client_order_id": row[11],
-                    "exchange_order_id": row[12],
-                    "metadata": json.loads(row[13] or "{}"),
-                    "ts": row[14],
-                }
-            )
-        return out
-
-    def upsert_open_position_state(
-        self,
-        *,
-        symbol: str,
-        trade_id: str,
-        side: str,
-        size: float,
-        entry_price: float,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        trailing_stop_pct: Optional[float] = None,
-        mode: str,
-    ) -> None:
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO open_position_state (
-                    symbol, trade_id, side, size, entry_price, stop_loss, take_profit, trailing_stop_pct, mode
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol) DO UPDATE SET
-                    trade_id=excluded.trade_id,
-                    side=excluded.side,
-                    size=excluded.size,
-                    entry_price=excluded.entry_price,
-                    stop_loss=excluded.stop_loss,
-                    take_profit=excluded.take_profit,
-                    trailing_stop_pct=excluded.trailing_stop_pct,
-                    mode=excluded.mode,
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (symbol, trade_id, side, size, entry_price, stop_loss, take_profit, trailing_stop_pct, mode),
-            )
-
-    def remove_open_position_state(self, symbol: str) -> None:
-        with self._conn:
-            self._conn.execute("DELETE FROM open_position_state WHERE symbol = ?", (symbol,))
-
-    def load_open_position_state(self, mode: Optional[str] = None) -> dict[str, dict]:
-        if mode is None:
-            cursor = self._conn.execute(
-                """
-                SELECT symbol, trade_id, side, size, entry_price, stop_loss, take_profit, trailing_stop_pct, mode
-                FROM open_position_state
-                """
-            )
-        else:
-            cursor = self._conn.execute(
-                """
-                SELECT symbol, trade_id, side, size, entry_price, stop_loss, take_profit, trailing_stop_pct, mode
-                FROM open_position_state
-                WHERE mode = ?
-                """,
-                (mode,),
-            )
-
-        out: dict[str, dict] = {}
-        for row in cursor.fetchall():
-            out[row[0]] = {
-                "trade_id": row[1],
-                "side": row[2],
-                "size": row[3],
-                "entry_price": row[4],
-                "stop_loss": row[5],
-                "take_profit": row[6],
-                "trailing_stop_pct": row[7],
-                "mode": row[8],
+    def get_active_position(self, symbol: str) -> Optional[dict]:
+        with self.get_session() as session:
+            pos = session.query(Position).filter(Position.symbol == symbol).first()
+            if not pos:
+                return None
+            return {
+                "symbol": pos.symbol,
+                "trade_id": pos.trade_id,
+                "side": pos.side.value,
+                "size": pos.size,
+                "avg_entry_price": pos.avg_entry_price,
+                "stop_loss": pos.stop_loss,
+                "take_profit": pos.take_profit,
+                "updated_at": pos.updated_at
             }
-        return out
 
-    def get_positions(self) -> Dict[str, Dict[str, float]]:
-        cursor = self._conn.execute("SELECT symbol, size, avg_price FROM positions")
-        return {row[0]: {"size": row[1], "avg_price": row[2]} for row in cursor.fetchall()}
+    def update_position(self, pos_data: dict) -> None:
+        """Upsert current position state."""
+        with self.get_session() as session:
+            try:
+                pos = session.query(Position).filter(Position.symbol == pos_data["symbol"]).first()
+                if not pos:
+                    pos = Position(
+                        symbol=pos_data["symbol"],
+                        trade_id=pos_data["trade_id"],
+                        side=PositionSide(pos_data["side"].lower()),
+                        size=pos_data["size"],
+                        avg_entry_price=pos_data["avg_entry_price"],
+                        stop_loss=pos_data.get("stop_loss"),
+                        take_profit=pos_data.get("take_profit")
+                    )
+                    session.add(pos)
+                else:
+                    pos.trade_id = pos_data["trade_id"]
+                    pos.side = PositionSide(pos_data["side"].lower())
+                    pos.size = pos_data["size"]
+                    pos.avg_entry_price = pos_data["avg_entry_price"]
+                    pos.stop_loss = pos_data.get("stop_loss")
+                    pos.take_profit = pos_data.get("take_profit")
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error updating position {pos_data['symbol']}: {e}")
 
-    def upsert_trade_record(
-        self,
-        *,
-        trade_id: str,
-        symbol: str,
-        side: str,
-        size: float,
-        entry_price: float,
-        strategy_name: Optional[str] = None,
-        metadata: Optional[dict] = None,
-    ) -> None:
-        metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO trade_records (
-                    trade_id, symbol, strategy_name, side, size, entry_price, status, metadata_json, entry_time
-                ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(trade_id) DO UPDATE SET
-                    size=excluded.size,
-                    entry_price=excluded.entry_price,
-                    metadata_json=excluded.metadata_json
-                """,
-                (trade_id, symbol, strategy_name, side, size, entry_price, metadata_json),
-            )
+    def close_position(self, symbol: str) -> None:
+        with self.get_session() as session:
+            try:
+                session.query(Position).filter(Position.symbol == symbol).delete()
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error closing position {symbol}: {e}")
 
-    def close_trade_record(
-        self,
-        *,
-        trade_id: str,
-        exit_price: float,
-        exit_time: Optional[float] = None,
-    ) -> None:
-        with self._conn:
-            # First, fetch entry details to calculate PnL
-            cursor = self._conn.execute(
-                "SELECT side, size, entry_price, entry_time FROM trade_records WHERE trade_id = ?",
-                (trade_id,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return
+    # --- Trade Lifecycle Operations ---
 
-            side, size, entry_price, entry_time_str = row
-            
-            # Simple PnL calculation
-            if side.lower() == "long":
-                pnl_raw = (exit_price - entry_price) * size
-            else:
-                pnl_raw = (entry_price - exit_price) * size
-            
-            pnl_pct = (pnl_raw / (entry_price * size)) * 100 if entry_price * size != 0 else 0.0
-            
-            # Duration calculation is tricky with SQLlite DEFAULT CURRENT_TIMESTAMP (which is a string)
-            # We'll just use the current time the DB sees for exit_time if not provided
-            self._conn.execute(
-                """
-                UPDATE trade_records SET
-                    exit_price = ?,
-                    exit_time = CURRENT_TIMESTAMP,
-                    pnl_raw = ?,
-                    pnl_pct = ?,
-                    status = 'closed',
-                    duration_s = (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', entry_time))
-                WHERE trade_id = ?
-                """,
-                (exit_price, pnl_raw, pnl_pct, trade_id),
-            )
+    def create_trade(self, trade_data: dict) -> None:
+        with self.get_session() as session:
+            try:
+                trade = Trade(
+                    trade_id=trade_data["trade_id"],
+                    symbol=trade_data["symbol"],
+                    strategy_name=trade_data.get("strategy_name"),
+                    side=PositionSide(trade_data["side"].lower()),
+                    size=trade_data["size"],
+                    entry_price=trade_data["entry_price"],
+                    status=TradeStatus.OPEN
+                )
+                session.add(trade)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error creating trade {trade_data['trade_id']}: {e}")
 
-    def get_trade_records(self, limit: int = 50) -> list[dict]:
-        cursor = self._conn.execute(
-            """
-            SELECT trade_id, symbol, strategy_name, side, size, entry_time, exit_time,
-                   entry_price, exit_price, pnl_raw, pnl_pct, duration_s, status
-            FROM trade_records
-            ORDER BY entry_time DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        out = []
-        for r in cursor.fetchall():
-            out.append({
-                "trade_id": r[0],
-                "symbol": r[1],
-                "strategy_name": r[2],
-                "side": r[3],
-                "size": r[4],
-                "entry_time": r[5],
-                "exit_time": r[6],
-                "entry_price": r[7],
-                "exit_price": r[8],
-                "pnl_raw": r[9],
-                "pnl_pct": r[10],
-                "duration_s": r[11],
-                "status": r[12]
-            })
-        return out
+    def close_trade(self, trade_id: str, exit_price: float) -> None:
+        with self.get_session() as session:
+            try:
+                trade = session.query(Trade).filter(Trade.trade_id == trade_id).first()
+                if trade:
+                    trade.exit_price = exit_price
+                    trade.exit_time = datetime.utcnow()
+                    trade.status = TradeStatus.CLOSED
+                    
+                    # Calculate PnL
+                    if trade.side == PositionSide.LONG:
+                        trade.pnl_raw = (exit_price - trade.entry_price) * trade.size
+                    else:
+                        trade.pnl_raw = (trade.entry_price - exit_price) * trade.size
+                    
+                    if trade.entry_price and trade.size:
+                        trade.pnl_pct = (trade.pnl_raw / (trade.entry_price * trade.size)) * 100
+                    
+                    session.commit()
+                    logger.info(f"Trade {trade_id} closed at {exit_price}. PnL: {trade.pnl_raw}")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error closing trade {trade_id}: {e}")
+
+    # --- Order Tracking ---
+
+    def save_order(self, order_data: dict) -> None:
+        with self.get_session() as session:
+            try:
+                order = Order(
+                    client_order_id=order_data["client_order_id"],
+                    order_id=order_data.get("order_id"),
+                    trade_id=order_data.get("trade_id"),
+                    symbol=order_data["symbol"],
+                    side=order_data["side"],
+                    order_type=order_data["order_type"],
+                    size=order_data["size"],
+                    price=order_data.get("price"),
+                    status=OrderStatus(order_data.get("status", "pending").lower()),
+                    metadata_json=order_data.get("metadata", {})
+                )
+                session.add(order)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error saving order {order_data['client_order_id']}: {e}")
+
+    def update_order_status(self, client_order_id: str, status: str, order_id: str = None, filled_size: float = None, avg_price: float = None) -> None:
+        with self.get_session() as session:
+            try:
+                order = session.query(Order).filter(Order.client_order_id == client_order_id).first()
+                if order:
+                    order.status = OrderStatus(status.lower())
+                    if order_id: order.order_id = order_id
+                    if filled_size is not None: order.filled_size = filled_size
+                    if avg_price is not None: order.avg_fill_price = avg_price
+                    session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error updating order {client_order_id}: {e}")
+
+    # --- Execution Logs ---
+
+    def log_execution(self, exec_data: dict) -> None:
+        with self.get_session() as session:
+            try:
+                log = ExecutionLog(
+                    execution_id=exec_data["execution_id"],
+                    trade_id=exec_data.get("trade_id"),
+                    order_id=exec_data.get("order_id"),
+                    symbol=exec_data["symbol"],
+                    event_type=exec_data["event_type"],
+                    side=exec_data.get("side"),
+                    size=exec_data.get("size"),
+                    price=exec_data.get("price"),
+                    status=exec_data.get("status"),
+                    reason=exec_data.get("reason"),
+                    metadata_json=exec_data.get("metadata", {})
+                )
+                session.add(log)
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error logging execution: {e}")
+
+    # --- Dashboard / Query Methods ---
+
+    def get_all_active_positions(self) -> List[dict]:
+        with self.get_session() as session:
+            positions = session.query(Position).all()
+            return [
+                {
+                    "symbol": p.symbol,
+                    "trade_id": p.trade_id,
+                    "side": p.side.value,
+                    "size": p.size,
+                    "avg_entry_price": p.avg_entry_price,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None
+                }
+                for p in positions
+            ]
+
+    def get_signals_history(self, limit: int = 50) -> List[dict]:
+        with self.get_session() as session:
+            signals = session.query(Signal).order_by(Signal.created_at.desc()).limit(limit).all()
+            return [
+                {
+                    "signal_id": s.signal_id,
+                    "strategy_name": s.strategy_name,
+                    "symbol": s.symbol,
+                    "action": s.action,
+                    "confidence": s.confidence,
+                    "price": s.price,
+                    "created_at": s.created_at.isoformat() if s.created_at else None
+                }
+                for s in signals
+            ]
+
+    def get_execution_history(self, limit: int = 50) -> List[dict]:
+        with self.get_session() as session:
+            logs = session.query(ExecutionLog).order_by(ExecutionLog.created_at.desc()).limit(limit).all()
+            return [
+                {
+                    "execution_id": l.execution_id,
+                    "symbol": l.symbol,
+                    "event_type": l.event_type,
+                    "side": l.side,
+                    "size": l.size,
+                    "price": l.price,
+                    "status": l.status,
+                    "created_at": l.created_at.isoformat() if l.created_at else None
+                }
+                for l in logs
+            ]
+
+    def get_trade_records(self, limit: int = 50) -> List[dict]:
+        with self.get_session() as session:
+            trades = session.query(Trade).order_by(Trade.entry_time.desc()).limit(limit).all()
+            return [
+                {
+                    "trade_id": t.trade_id,
+                    "symbol": t.symbol,
+                    "side": t.side.value if t.side else None,
+                    "status": t.status.value if t.status else None,
+                    "entry_price": t.entry_price,
+                    "exit_price": t.exit_price,
+                    "pnl_raw": t.pnl_raw,
+                    "pnl_pct": t.pnl_pct
+                }
+                for t in trades
+            ]

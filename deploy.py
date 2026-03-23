@@ -116,6 +116,8 @@ def check_prerequisites(os_name: str, use_docker: bool) -> dict[str, str]:
     if py:
         result = run([py, "--version"], capture=True, check=False)
         ver = (result.stdout.strip() or result.stderr.strip())
+        # Optional: Add strict version check logic here if 3.12 is hard requirement
+        # currently relying on user to read the print output
         ok(f"Python   : {py} ({ver})")
         found["python"] = py
     else:

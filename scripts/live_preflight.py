@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 import time
+from sqlalchemy import text
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +13,7 @@ if str(SRC_DIR) not in sys.path:
 from delta_exchange_bot.api.delta_client import DeltaAPIError
 from delta_exchange_bot.api.delta_client import DeltaClient
 from delta_exchange_bot.core.settings import Settings
-from delta_exchange_bot.persistence.db import StateDB
+from delta_exchange_bot.persistence.db import DatabaseManager
 
 
 @dataclass
@@ -85,13 +86,15 @@ def _check_settings(settings: Settings) -> list[CheckResult]:
     return out
 
 
-def _check_state_db(path: str) -> CheckResult:
+def _check_database(dsn: str) -> CheckResult:
     try:
-        db = StateDB(path)
-        state = db.load_open_position_state()
-        return _ok("state_db", f"OK at {path}; recovered_open_positions={len(state)}")
+        db = DatabaseManager(dsn)
+        # Try a simple query to verify connection
+        with db.get_session() as session:
+            session.execute(text("SELECT 1"))
+        return _ok("database", "PostgreSQL connection verified")
     except Exception as exc:
-        return _fail("state_db", f"Database check failed: {exc}")
+        return _fail("database", f"Database connection failed: {exc}")
 
 
 def _check_public_api(client: DeltaClient) -> CheckResult:
@@ -173,7 +176,9 @@ def _check_private_api(client: DeltaClient, settings: Settings) -> list[CheckRes
 def main() -> None:
     settings = Settings(mode="live")
     results = _check_settings(settings)
-    results.append(_check_state_db(settings.state_db_path))
+    results.append(_check_database(settings.postgres_dsn))
+
+    from sqlalchemy import text # Required for the SELECT 1 check
 
     client = DeltaClient(
         api_key=settings.api_key,

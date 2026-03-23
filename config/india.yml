@@ -10,3 +10,7 @@ delta:
   api_url: "https://api.india.delta.exchange"
   ws_url: "wss://socket.india.delta.exchange"
   enable_risk: true
+
+persistence:
+  # Use your production database here
+  postgres_dsn: "postgresql://postgres:admin1234@localhost:5432/trading_live"

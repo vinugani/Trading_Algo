@@ -39,20 +39,17 @@ class FakeDB:
         self.rows = []
         self.open_positions = {}
 
-    def save_execution(self, **kwargs):
-        existing = {row["execution_id"] for row in self.rows}
-        if kwargs["execution_id"] in existing:
-            return False
-        self.rows.append(kwargs)
+    def log_execution(self, exec_data: dict):
+        self.rows.append(exec_data)
         return True
 
-    def load_open_position_state(self, mode=None):
-        return {}
+    def get_active_position(self, symbol: str):
+        return self.open_positions.get(symbol)
 
-    def upsert_open_position_state(self, **kwargs):
-        self.open_positions[kwargs["symbol"]] = kwargs
+    def update_position(self, pos_data: dict):
+        self.open_positions[pos_data["symbol"]] = pos_data
 
-    def remove_open_position_state(self, symbol):
+    def close_position(self, symbol: str):
         self.open_positions.pop(symbol, None)
 
 

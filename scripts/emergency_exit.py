@@ -13,16 +13,17 @@ if str(SRC_DIR) not in sys.path:
 
 from delta_exchange_bot.cli.professional_bot import ProfessionalTradingBot
 from delta_exchange_bot.core.settings import Settings
-from delta_exchange_bot.persistence.db import StateDB
+from delta_exchange_bot.persistence.db import DatabaseManager
 
 
 def _collect_symbols(settings: Settings, cli_symbols: list[str]) -> list[str]:
     symbols = {s.strip().upper() for s in settings.trade_symbols if str(s).strip()}
     symbols.update(s.strip().upper() for s in cli_symbols if str(s).strip())
     try:
-        db = StateDB(settings.state_db_path)
-        for symbol in db.load_open_position_state(mode="live").keys():
-            symbols.add(str(symbol).strip().upper())
+        db = DatabaseManager(settings.postgres_dsn)
+        for symbol in settings.trade_symbols:
+            if db.get_active_position(symbol):
+                symbols.add(symbol.strip().upper())
     except Exception:
         pass
     return sorted(symbols)

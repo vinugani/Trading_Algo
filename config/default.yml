@@ -10,3 +10,7 @@ delta:
   api_url: "https://cdn-ind.testnet.deltaex.org"
   ws_url: "wss://testnet-socket.india.delta.exchange"
   enable_risk: true
+
+persistence:
+  # Use a separate database for paper trading (e.g., trading_paper)
+  postgres_dsn: "postgresql://postgres:admin1234@localhost:5432/trading_paper"

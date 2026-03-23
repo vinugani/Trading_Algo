@@ -1,0 +1,30 @@
+# Delta Exchange Trading Bot - Production Config Example
+
+app:
+  mode: paper            # 'paper' or 'live'
+  strategy_name: enhanced_rsi
+  trade_symbols:
+    - BTCUSD
+    - ETHUSD
+    - SOLUSD
+  trade_frequency_s: 60
+  max_positions: 3
+
+delta:
+  api_key: "YOUR_API_KEY"
+  api_secret: "YOUR_API_SECRET"
+  exchange_env: prod-india
+  api_url: "https://api.india.delta.exchange"
+  ws_url: "wss://socket.india.delta.exchange"
+
+risk:
+  max_risk_per_trade: 0.02 # 2% of equity
+  max_daily_loss: 0.05     # 5% daily kill switch
+  min_confidence: 0.6      # Only trade signals with > 0.6 confidence
+  max_slippage_pct: 0.002  # 0.2% slippage cap
+
+persistence:
+  postgres_dsn: "postgresql://postgres:admin1234@localhost:5432/trading_db"
+
+reconciliation:
+  interval_s: 300 # Sync with exchange every 5 minutes

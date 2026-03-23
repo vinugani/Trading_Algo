@@ -11,7 +11,7 @@ from delta_exchange_bot.core.settings import Settings
 from delta_exchange_bot.data.market_data import fetch_candles
 from delta_exchange_bot.execution.order_execution_engine import OrderExecutionEngine
 from delta_exchange_bot.monitoring.prometheus_exporter import PrometheusMetricsExporter
-from delta_exchange_bot.persistence.db import StateDB
+from delta_exchange_bot.persistence.db import DatabaseManager
 from delta_exchange_bot.risk.risk_management import MAX_DAILY_LOSS, MAX_LEVERAGE, MAX_RISK_PER_TRADE
 from delta_exchange_bot.risk.risk_management import calculate_position_size, validate_trade
 from delta_exchange_bot.strategy.base import Signal, Strategy
@@ -32,7 +32,7 @@ class MainTradingBot:
         self.client = DeltaClient(settings.api_key, settings.api_secret, settings.api_url)
         live_client = self.client if settings.mode == "live" else None
         self.execution_engine = OrderExecutionEngine(live_client)
-        self.db = StateDB(settings.state_db_path)
+        self.db = DatabaseManager(settings.postgres_dsn)
         self.metrics = PrometheusMetricsExporter()
         self.strategy = self._build_strategy(settings.strategy_name)
         self.account_equity = 100000.0
@@ -160,7 +160,11 @@ class MainTradingBot:
             self.metrics.set_total_pnl(self.account_equity - self.start_of_day_equity)
 
     def _load_open_positions_from_db(self) -> None:
-        restored = self.db.load_open_position_state(mode=self.settings.mode)
+        restored = {}
+        for symbol in self.settings.trade_symbols:
+            pos = self.db.get_active_position(symbol)
+            if pos:
+                restored[symbol] = pos
         self._open_positions = restored
         self._recalculate_open_notional()
         if not restored:
@@ -250,23 +254,19 @@ class MainTradingBot:
         self.metrics.record_trade(pnl)
         self._update_drawdown_metric()
         self._update_total_pnl_metric()
-        self.db.save_execution(
-            trade_id=trade_id,
-            execution_id=execution_id,
-            symbol=symbol,
-            side=exit_side,
-            size=exit_size,
-            price=exit_price,
-            event_type="exit",
-            order_type="market_order",
-            mode=self.settings.mode,
-            status="filled",
-            reason=str(triggered.get("reason", "protection")),
-            client_order_id=triggered.get("client_order_id"),
-            exchange_order_id=triggered.get("exchange_order_id"),
-            metadata={"trigger_payload": triggered},
-        )
-        self.db.remove_open_position_state(symbol)
+        self.db.log_execution({
+            "trade_id": trade_id,
+            "execution_id": execution_id,
+            "symbol": symbol,
+            "side": exit_side,
+            "size": exit_size,
+            "price": exit_price,
+            "event_type": "exit",
+            "status": "filled",
+            "reason": str(triggered.get("reason", "protection")),
+            "metadata": {"trigger_payload": triggered},
+        })
+        self.db.close_position(symbol)
         self._recalculate_open_notional()
 
     @classmethod
@@ -406,31 +406,26 @@ class MainTradingBot:
                 "take_profit": signal.take_profit,
                 "trailing_stop_pct": signal.trailing_stop_pct,
             }
-            self.db.save_execution(
-                trade_id=trade_id,
-                execution_id=entry_execution_id,
-                symbol=signal.symbol,
-                side=side,
-                size=size,
-                price=signal.price,
-                event_type="entry",
-                order_type="paper_limit",
-                mode=self.settings.mode,
-                status="filled",
-                client_order_id=entry_client_order_id,
-                metadata={"strategy": self.settings.strategy_name, "signal_confidence": signal.confidence},
-            )
-            self.db.upsert_open_position_state(
-                symbol=signal.symbol,
-                trade_id=trade_id,
-                side=self._open_positions[signal.symbol]["side"],
-                size=size,
-                entry_price=signal.price,
-                stop_loss=signal.stop_loss,
-                take_profit=signal.take_profit,
-                trailing_stop_pct=signal.trailing_stop_pct,
-                mode=self.settings.mode,
-            )
+            self.db.log_execution({
+                "trade_id": trade_id,
+                "execution_id": entry_execution_id,
+                "symbol": signal.symbol,
+                "side": side,
+                "size": size,
+                "price": signal.price,
+                "event_type": "entry",
+                "status": "filled",
+                "metadata": {"strategy": self.settings.strategy_name, "signal_confidence": signal.confidence},
+            })
+            self.db.update_position({
+                "symbol": signal.symbol,
+                "trade_id": trade_id,
+                "side": self._open_positions[signal.symbol]["side"],
+                "size": size,
+                "avg_entry_price": signal.price,
+                "stop_loss": signal.stop_loss,
+                "take_profit": signal.take_profit
+            })
             position_side = self._open_positions[signal.symbol]["side"]
             if signal.stop_loss is not None:
                 self.execution_engine.place_stop_loss(
@@ -494,21 +489,17 @@ class MainTradingBot:
         is_filled = self._is_filled_order(order, assume_market_filled=(order_type == "market_order"))
         status = "filled" if is_filled else "submitted"
         position_side = "long" if side == "buy" else "short"
-        self.db.save_execution(
-            trade_id=trade_id,
-            execution_id=entry_execution_id,
-            symbol=signal.symbol,
-            side=side,
-            size=size,
-            price=signal.price,
-            event_type="entry",
-            order_type=order_type,
-            mode=self.settings.mode,
-            status=status,
-            client_order_id=entry_client_order_id,
-            exchange_order_id=self._extract_exchange_order_id(order),
-            metadata={"strategy": self.settings.strategy_name, "signal_confidence": signal.confidence},
-        )
+        self.db.log_execution({
+            "trade_id": trade_id,
+            "execution_id": entry_execution_id,
+            "symbol": signal.symbol,
+            "side": side,
+            "size": size,
+            "price": signal.price,
+            "event_type": "entry",
+            "status": status,
+            "metadata": {"strategy": self.settings.strategy_name, "signal_confidence": signal.confidence},
+        })
         if not is_filled:
             logger.info("Order for %s accepted but not filled yet; waiting for fill before opening local position", signal.symbol)
             return order
@@ -549,17 +540,15 @@ class MainTradingBot:
             "take_profit": signal.take_profit,
             "trailing_stop_pct": signal.trailing_stop_pct,
         }
-        self.db.upsert_open_position_state(
-            symbol=signal.symbol,
-            trade_id=trade_id,
-            side=position_side,
-            size=size,
-            entry_price=signal.price,
-            stop_loss=signal.stop_loss,
-            take_profit=signal.take_profit,
-            trailing_stop_pct=signal.trailing_stop_pct,
-            mode=self.settings.mode,
-        )
+        self.db.update_position({
+            "symbol": signal.symbol,
+            "trade_id": trade_id,
+            "side": position_side,
+            "size": size,
+            "avg_entry_price": signal.price,
+            "stop_loss": signal.stop_loss,
+            "take_profit": signal.take_profit
+        })
         self._recalculate_open_notional()
         return order
 
