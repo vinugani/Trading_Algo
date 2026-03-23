@@ -140,6 +140,42 @@ class DatabaseManager:
                 session.rollback()
                 logger.error(f"Error creating trade {trade_data['trade_id']}: {e}")
 
+    def upsert_trade_record(self, **kwargs) -> None:
+        """Compatibility helper for code paths that expect a trade upsert API."""
+        trade_id = kwargs.get("trade_id")
+        if not trade_id:
+            logger.error("upsert_trade_record called without trade_id")
+            return
+
+        with self.get_session() as session:
+            try:
+                trade = session.query(Trade).filter(Trade.trade_id == trade_id).first()
+                side_value = str(kwargs.get("side", "long")).lower()
+                if trade is None:
+                    trade = Trade(
+                        trade_id=trade_id,
+                        symbol=kwargs.get("symbol"),
+                        strategy_name=kwargs.get("strategy_name"),
+                        side=PositionSide(side_value),
+                        size=kwargs.get("size", 0.0),
+                        entry_price=kwargs.get("entry_price"),
+                        status=TradeStatus.OPEN,
+                        metadata_json=kwargs.get("metadata", {}),
+                    )
+                    session.add(trade)
+                else:
+                    trade.symbol = kwargs.get("symbol", trade.symbol)
+                    trade.strategy_name = kwargs.get("strategy_name", trade.strategy_name)
+                    trade.side = PositionSide(side_value)
+                    trade.size = kwargs.get("size", trade.size)
+                    trade.entry_price = kwargs.get("entry_price", trade.entry_price)
+                    trade.status = TradeStatus.OPEN
+                    trade.metadata_json = kwargs.get("metadata", trade.metadata_json)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error upserting trade {trade_id}: {e}")
+
     def close_trade(self, trade_id: str, exit_price: float) -> None:
         with self.get_session() as session:
             try:

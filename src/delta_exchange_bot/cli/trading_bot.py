@@ -254,6 +254,7 @@ class MainTradingBot:
         self.metrics.record_trade(pnl)
         self._update_drawdown_metric()
         self._update_total_pnl_metric()
+        self.db.close_trade(trade_id, exit_price)
         self.db.log_execution({
             "trade_id": trade_id,
             "execution_id": execution_id,
@@ -406,6 +407,14 @@ class MainTradingBot:
                 "take_profit": signal.take_profit,
                 "trailing_stop_pct": signal.trailing_stop_pct,
             }
+            self.db.create_trade({
+                "trade_id": trade_id,
+                "symbol": signal.symbol,
+                "side": self._open_positions[signal.symbol]["side"],
+                "size": size,
+                "entry_price": signal.price,
+                "strategy_name": self.settings.strategy_name,
+            })
             self.db.log_execution({
                 "trade_id": trade_id,
                 "execution_id": entry_execution_id,
@@ -489,6 +498,15 @@ class MainTradingBot:
         is_filled = self._is_filled_order(order, assume_market_filled=(order_type == "market_order"))
         status = "filled" if is_filled else "submitted"
         position_side = "long" if side == "buy" else "short"
+        if is_filled:
+            self.db.create_trade({
+                "trade_id": trade_id,
+                "symbol": signal.symbol,
+                "side": position_side,
+                "size": size,
+                "entry_price": signal.price,
+                "strategy_name": self.settings.strategy_name,
+            })
         self.db.log_execution({
             "trade_id": trade_id,
             "execution_id": entry_execution_id,

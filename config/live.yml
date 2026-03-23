@@ -1,0 +1,7 @@
+app:
+  mode: live
+  dry_run: false
+  max_drawdown_pct: 0.08
+
+persistence:
+  postgres_dsn: "postgresql://postgres:admin1234@localhost:5432/trading_live"

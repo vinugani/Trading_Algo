@@ -38,10 +38,19 @@ class FakeDB:
     def __init__(self):
         self.rows = []
         self.open_positions = {}
+        self.trades = {}
 
     def log_execution(self, exec_data: dict):
         self.rows.append(exec_data)
         return True
+
+    def create_trade(self, trade_data: dict):
+        self.trades[trade_data["trade_id"]] = dict(trade_data)
+
+    def close_trade(self, trade_id: str, exit_price: float):
+        trade = self.trades.get(trade_id)
+        if trade is not None:
+            trade["exit_price"] = exit_price
 
     def get_active_position(self, symbol: str):
         return self.open_positions.get(symbol)

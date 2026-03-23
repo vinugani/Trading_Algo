@@ -17,7 +17,13 @@ def _load_yaml_config(mode: str) -> dict[str, Any]:
     config_dir = root_dir / "config"
 
     # Load default first, then mode-specific overrides
-    for fname in ("default.yml", f"{mode}.yml"):
+    mode_filenames = [f"{mode}.yml"]
+    if mode == "live":
+        mode_filenames.append("prod.yml")
+    elif mode == "prod":
+        mode_filenames.append("live.yml")
+
+    for fname in ("default.yml", *mode_filenames):
         fpath = config_dir / fname
         if fpath.exists():
             try:
