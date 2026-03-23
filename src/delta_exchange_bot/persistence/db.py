@@ -39,6 +39,17 @@ class DatabaseManager:
     def get_session(self) -> Session:
         return self.SessionLocal()
 
+    @staticmethod
+    def _normalize_order_status(status: Optional[str]) -> str:
+        value = str(status or "pending").lower()
+        aliases = {
+            "submitted": "pending",
+            "partial_filled": "partially_filled",
+            "complete": "filled",
+            "closed": "filled",
+        }
+        return aliases.get(value, value)
+
     # --- Signal Operations ---
 
     def save_signal(self, signal_data: Optional[dict] = None, **kwargs) -> None:
@@ -204,33 +215,35 @@ class DatabaseManager:
 
     # --- Order Tracking ---
 
-    def save_order(self, order_data: dict) -> None:
+    def save_order(self, order_data: Optional[dict] = None, **kwargs) -> None:
+        payload = dict(order_data or {})
+        payload.update(kwargs)
         with self.get_session() as session:
             try:
                 order = Order(
-                    client_order_id=order_data["client_order_id"],
-                    order_id=order_data.get("order_id"),
-                    trade_id=order_data.get("trade_id"),
-                    symbol=order_data["symbol"],
-                    side=order_data["side"],
-                    order_type=order_data["order_type"],
-                    size=order_data["size"],
-                    price=order_data.get("price"),
-                    status=OrderStatus(order_data.get("status", "pending").lower()),
-                    metadata_json=order_data.get("metadata", {})
+                    client_order_id=payload["client_order_id"],
+                    order_id=payload.get("order_id"),
+                    trade_id=payload.get("trade_id"),
+                    symbol=payload["symbol"],
+                    side=payload["side"],
+                    order_type=payload["order_type"],
+                    size=payload["size"],
+                    price=payload.get("price"),
+                    status=OrderStatus(self._normalize_order_status(payload.get("status"))),
+                    metadata_json=payload.get("metadata", {})
                 )
                 session.add(order)
                 session.commit()
             except Exception as e:
                 session.rollback()
-                logger.error(f"Error saving order {order_data['client_order_id']}: {e}")
+                logger.error(f"Error saving order {payload.get('client_order_id')}: {e}")
 
     def update_order_status(self, client_order_id: str, status: str, order_id: str = None, filled_size: float = None, avg_price: float = None) -> None:
         with self.get_session() as session:
             try:
                 order = session.query(Order).filter(Order.client_order_id == client_order_id).first()
                 if order:
-                    order.status = OrderStatus(status.lower())
+                    order.status = OrderStatus(self._normalize_order_status(status))
                     if order_id: order.order_id = order_id
                     if filled_size is not None: order.filled_size = filled_size
                     if avg_price is not None: order.avg_fill_price = avg_price
@@ -385,4 +398,19 @@ class DatabaseManager:
             "status": kwargs.get("status"),
             "reason": kwargs.get("reason"),
             "metadata": kwargs.get("metadata")
+        })
+
+    def save_order_record(self, **kwargs):
+        """Alias for save_order used by the professional bot."""
+        self.save_order({
+            "client_order_id": kwargs.get("client_order_id"),
+            "order_id": kwargs.get("order_id"),
+            "trade_id": kwargs.get("trade_id"),
+            "symbol": kwargs.get("symbol"),
+            "side": kwargs.get("side"),
+            "order_type": kwargs.get("order_type"),
+            "size": kwargs.get("size"),
+            "price": kwargs.get("price"),
+            "status": kwargs.get("status", "pending"),
+            "metadata": kwargs.get("metadata"),
         })
