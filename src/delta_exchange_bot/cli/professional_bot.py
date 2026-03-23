@@ -1600,7 +1600,10 @@ class ProfessionalTradingBot:
                 if self.settings.mode == "live":
                     await asyncio.to_thread(self._refresh_live_equity)
                 tasks = [self.process_symbol(symbol) for symbol in self.settings.trade_symbols]
-                await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for symbol, result in zip(self.settings.trade_symbols, results):
+                    if isinstance(result, Exception):
+                        logger.error(f"process_symbol failed for {symbol}: {result}")
                 self._save_performance_metrics()
                 cycle += 1
                 elapsed = time.perf_counter() - started

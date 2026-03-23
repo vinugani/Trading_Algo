@@ -80,3 +80,10 @@ db.close()
 python -m pytest tests\unit\test_websocket_manager.py -q
 python -m pytest tests\unit\test_engine.py -q
 python -m pytest tests\unit\test_settings.py -q
+
+Setup the chronyd
+vim /etc/chrony.conf
+server 169.254.169.123 prefer iburst
+
+systemctl restart chronyd
+chronyc tracking

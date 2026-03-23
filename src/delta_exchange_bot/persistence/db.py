@@ -41,26 +41,28 @@ class DatabaseManager:
 
     # --- Signal Operations ---
 
-    def save_signal(self, signal_data: dict) -> None:
+    def save_signal(self, signal_data: Optional[dict] = None, **kwargs) -> None:
+        payload = dict(signal_data or {})
+        payload.update(kwargs)
         with self.get_session() as session:
             try:
                 signal = Signal(
-                    signal_id=signal_data["signal_id"],
-                    strategy_name=signal_data["strategy_name"],
-                    symbol=signal_data["symbol"],
-                    action=signal_data["action"],
-                    confidence=signal_data["confidence"],
-                    price=signal_data["price"],
-                    stop_loss=signal_data.get("stop_loss"),
-                    take_profit=signal_data.get("take_profit"),
-                    regime=signal_data.get("regime"),
-                    metadata_json=signal_data.get("metadata", {})
+                    signal_id=payload["signal_id"],
+                    strategy_name=payload["strategy_name"],
+                    symbol=payload["symbol"],
+                    action=payload["action"],
+                    confidence=payload["confidence"],
+                    price=payload["price"],
+                    stop_loss=payload.get("stop_loss"),
+                    take_profit=payload.get("take_profit"),
+                    regime=payload.get("regime"),
+                    metadata_json=payload.get("metadata", {})
                 )
                 session.add(signal)
                 session.commit()
             except IntegrityError:
                 session.rollback()
-                logger.warning(f"Signal {signal_data['signal_id']} already exists.")
+                logger.warning(f"Signal {payload['signal_id']} already exists.")
             except Exception as e:
                 session.rollback()
                 logger.error(f"Error saving signal: {e}")
