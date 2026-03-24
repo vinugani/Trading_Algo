@@ -37,10 +37,7 @@ from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy
 from delta_exchange_bot.strategy.portfolio import PortfolioStrategy
 from delta_exchange_bot.utils.logging import configure_logging
 
-try:
-    from loguru import logger
-except Exception:
-    logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ProfessionalTradingBot:
