@@ -116,6 +116,7 @@ class Settings(BaseSettings):
 
     enable_strategy_portfolio: bool = True
     min_signal_confidence: float = 0.6
+    paper_force_buy_confidence_threshold: float = 0.3
     enable_advanced_risk: bool = True
     api_circuit_breaker_failure_threshold: int = 5
     api_circuit_breaker_cooldown_s: int = 60

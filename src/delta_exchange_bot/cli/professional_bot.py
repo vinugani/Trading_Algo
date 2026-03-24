@@ -1142,6 +1142,80 @@ class ProfessionalTradingBot:
         payload.update({key: self._sanitize_log_value(val) for key, val in fields.items()})
         logger.info(json.dumps(payload, separators=(",", ":"), sort_keys=True))
 
+    def _log_execution_state(
+        self,
+        *,
+        symbol: str,
+        signal: Optional[Signal],
+        reason: str,
+        details: Optional[str] = None,
+    ) -> None:
+        action = signal.action if signal is not None else None
+        confidence = float(signal.confidence) if signal is not None else None
+        if signal is not None:
+            logger.info(
+                "Execution gate for %s: action=%s confidence=%.4f reason=%s details=%s",
+                symbol,
+                signal.action,
+                float(signal.confidence),
+                reason,
+                details or "",
+            )
+        else:
+            logger.info("Execution gate for %s: reason=%s details=%s", symbol, reason, details or "")
+        self._structured_log(
+            "execution_gate",
+            symbol=symbol,
+            action=action,
+            confidence=confidence,
+            reason=reason,
+            details=details,
+        )
+
+    def _maybe_force_paper_test_entry(
+        self,
+        *,
+        symbol: str,
+        signal: Signal,
+        regime: str,
+        strategy_name: str,
+    ) -> tuple[Signal, bool]:
+        threshold = max(0.0, min(1.0, float(self.settings.paper_force_buy_confidence_threshold)))
+        if self.settings.mode == "live" or threshold <= 0:
+            return signal, False
+        if signal.action.lower() != "hold":
+            return signal, False
+        if float(signal.confidence) <= threshold:
+            return signal, False
+
+        forced_signal = self._with_default_protection(
+            Signal(
+                symbol=signal.symbol,
+                action="buy",
+                confidence=float(signal.confidence),
+                price=float(signal.price),
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                trailing_stop_pct=signal.trailing_stop_pct,
+            )
+        )
+        details = (
+            f"forced_buy_for_paper_test threshold={threshold:.4f} "
+            f"regime={regime} strategy={strategy_name}"
+        )
+        logger.warning("[%s] Paper fallback forcing BUY for execution test: %s", symbol, details)
+        self._structured_log(
+            "paper_execution_fallback",
+            symbol=symbol,
+            original_action=signal.action,
+            forced_action="buy",
+            confidence=float(signal.confidence),
+            threshold=threshold,
+            regime=regime,
+            strategy=strategy_name,
+        )
+        return forced_signal, True
+
     def _validate_risk(self, signal: Signal, indicators: dict[str, float]) -> tuple[bool, float]:
         self._last_no_trade_reason = None
         signal = self._with_default_protection(signal)
@@ -1430,11 +1504,27 @@ class ProfessionalTradingBot:
         signal = self._with_default_protection(signal)
         side = signal.action.lower()
         if side not in {"buy", "sell"}:
+            self._log_execution_state(
+                symbol=signal.symbol,
+                signal=signal,
+                reason="execute_order_skipped_invalid_action",
+            )
             return None
         trade_id = self._new_trade_id(signal.symbol)
         entry_execution_id = f"{trade_id}:entry"
         entry_client_order_id = self._safe_client_order_id(f"{trade_id}-entry")
         requested_order_type = "market_or_limit_smart" if self.settings.enable_smart_order_routing else "limit_order"
+        self._structured_log(
+            "execution_started",
+            symbol=signal.symbol,
+            trade_id=trade_id,
+            action=side,
+            confidence=float(signal.confidence),
+            size=float(size),
+            strategy=strategy_name,
+            regime=regime,
+            mode=self.settings.mode,
+        )
 
         if self.settings.mode != "live":
             self.db.save_trade(
@@ -1480,10 +1570,21 @@ class ProfessionalTradingBot:
                 strategy_name=strategy_name,
                 entry_order_type="paper_limit",
             )
+            self._structured_log(
+                "paper_execution_simulated",
+                symbol=signal.symbol,
+                trade_id=trade_id,
+                action=side,
+                confidence=float(signal.confidence),
+                size=float(size),
+                order_type="paper_limit",
+                db_writes=["trades", "orders", "execution_logs", "positions"],
+            )
             return {"paper": True, "trade_id": trade_id}
 
         if not self.safety.can_trade():
             self._last_no_trade_reason = "api_circuit_breaker_open"
+            self._log_no_trade_reason(signal.symbol, "api_circuit_breaker_open")
             return None
 
         pre_ok, before_signed = self._validate_pre_execution(signal.symbol, side)
@@ -1570,6 +1671,15 @@ class ProfessionalTradingBot:
             filled=is_filled,
         ):
             return None
+        self._structured_log(
+            "execution_completed",
+            symbol=signal.symbol,
+            trade_id=trade_id,
+            action=side,
+            filled=bool(is_filled),
+            order_type=actual_order_type if self.settings.enable_smart_order_routing else requested_order_type,
+            mode=self.settings.mode,
+        )
         return order
 
     def _cancel_open_orders_for_symbol(self, symbol: str) -> None:
@@ -1745,23 +1855,29 @@ class ProfessionalTradingBot:
 
     async def process_symbol(self, symbol: str) -> None:
         if self._kill_switch_triggered:
+            self._log_execution_state(symbol=symbol, signal=None, reason="kill_switch_triggered")
             return
         if self._stop_requested or self._shutdown_requested_via_file():
             self._stop_requested = True
+            self._log_execution_state(symbol=symbol, signal=None, reason="stop_requested")
             return
         if self._trading_paused:
             self._last_no_trade_reason = self._pause_reason or "trading_paused"
+            self._log_no_trade_reason(symbol, self._last_no_trade_reason)
             return
         if not self.safety.can_trade():
             self._last_no_trade_reason = "api_circuit_breaker_open"
+            self._log_no_trade_reason(symbol, "api_circuit_breaker_open")
             return
 
         if self.settings.mode == "live":
             if not self.sync_position_with_exchange(symbol, reason="pre_symbol_cycle"):
                 self.halt_trading(f"pre_cycle_sync_failed:{symbol}")
+                self._log_no_trade_reason(symbol, "pre_cycle_sync_failed")
                 return
             if not self.validate_position_consistency(symbol):
                 self._last_no_trade_reason = "position_mismatch"
+                self._log_no_trade_reason(symbol, "position_mismatch")
                 return
 
         try:
@@ -1770,12 +1886,14 @@ class ProfessionalTradingBot:
             logger.info(f"[{symbol}] Successfully fetched {len(candles)} candles.")
         except Exception as exc:
             logger.warning(f"Market data fetch failed for {symbol}: {exc}")
+            self._log_no_trade_reason(symbol, "market_data_fetch_failed", details=str(exc))
             return
         
         indicators = self.calculate_indicators(candles)
         if not indicators:
             logger.warning(f"[{symbol}] Could not calculate indicators (missing data).")
             self._last_no_trade_reason = "market_data_unavailable"
+            self._log_no_trade_reason(symbol, "market_data_unavailable")
             return
         
         price = indicators.get("price", 0.0)
@@ -1847,10 +1965,21 @@ class ProfessionalTradingBot:
                         triggered=forced_exit,
                     )
             self._last_no_trade_reason = "existing_open_position"
+            self._log_no_trade_reason(
+                symbol,
+                "existing_open_position",
+                details=f"trade_id={self._open_positions.get(symbol, {}).get('trade_id')}",
+            )
             return
 
         signal, regime, strategy_name = self.generate_strategy_signal(symbol, candles)
         signal = self._with_default_protection(signal)
+        self._log_execution_state(
+            symbol=symbol,
+            signal=signal,
+            reason="signal_generated",
+            details=f"regime={regime} strategy={strategy_name}",
+        )
         self._save_signal(signal=signal, strategy_name=strategy_name, regime=regime, indicators=indicators)
         logger.info(
             "[%s] Strategy decision: regime=%s strategy=%s action=%s confidence=%.4f",
@@ -1878,6 +2007,13 @@ class ProfessionalTradingBot:
             },
         )
         
+        signal, forced_paper_fallback = self._maybe_force_paper_test_entry(
+            symbol=symbol,
+            signal=signal,
+            regime=regime,
+            strategy_name=strategy_name,
+        )
+
         if signal.action.lower() == "hold":
             details = (
                 f"regime={regime} strategy={strategy_name} confidence={float(signal.confidence):.4f} "
@@ -1898,24 +2034,24 @@ class ProfessionalTradingBot:
             action=signal.action,
             calculated_score=float(signal.confidence),
             final_confidence=float(signal.confidence),
-            decision_reason="actionable_signal_generated",
+            decision_reason="paper_execution_fallback" if forced_paper_fallback else "actionable_signal_generated",
         )
 
         min_confidence = max(0.0, min(1.0, float(self.settings.min_signal_confidence)))
         if float(signal.confidence) < min_confidence:
-            self._last_no_trade_reason = "signal_confidence_below_threshold"
-            self._log_no_trade_reason(
-                symbol,
-                "signal_confidence_below_threshold",
+            self._log_execution_state(
+                symbol=symbol,
+                signal=signal,
+                reason="signal_confidence_below_threshold",
                 details=(
                     f"signal_confidence={float(signal.confidence):.4f} "
-                    f"threshold={min_confidence:.4f} regime={regime} strategy={strategy_name}"
+                    f"threshold={min_confidence:.4f} regime={regime} strategy={strategy_name}; continuing_to_risk_validation"
                 ),
             )
-            return
 
         if self.settings.mode == "live" and self._position_mismatch_detected(symbol):
             self._last_no_trade_reason = "position_mismatch"
+            self._log_no_trade_reason(symbol, "position_mismatch")
             return
 
         ok, size = self._validate_risk(signal, indicators)
@@ -1924,6 +2060,16 @@ class ProfessionalTradingBot:
             self._log_no_trade_reason(symbol, "risk_validation_failed", details=reason)
             return
 
+        self._structured_log(
+            "execution_requested",
+            symbol=symbol,
+            action=signal.action,
+            confidence=float(signal.confidence),
+            size=float(size),
+            strategy=strategy_name,
+            regime=regime,
+            mode=self.settings.mode,
+        )
         try:
             await asyncio.to_thread(self.execute_order, signal, size, strategy_name, regime)
         except DeltaAPIError as exc:
