@@ -16,7 +16,7 @@ class MeanReversionStrategy(CandleStrategy):
     def __init__(
         self,
         lookback: int = 20,
-        z_entry: float = 1.5,
+        z_entry: float = 0.8,
         stop_loss_pct: float = 0.004,
         take_profit_pct: float = 0.006,
         trailing_stop_pct: float = 0.003,

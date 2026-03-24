@@ -189,6 +189,23 @@ class DatabaseManager:
                 session.rollback()
                 logger.error(f"Error upserting trade {trade_id}: {e}")
 
+    def save_trade(self, **kwargs) -> None:
+        """Compatibility helper used by the professional bot before child rows are written."""
+        side = str(kwargs.get("side", "long")).lower()
+        if side == "buy":
+            side = "long"
+        elif side == "sell":
+            side = "short"
+        self.upsert_trade_record(
+            trade_id=kwargs.get("trade_id"),
+            symbol=kwargs.get("symbol"),
+            strategy_name=kwargs.get("strategy_name"),
+            side=side,
+            size=kwargs.get("size", 0.0),
+            entry_price=kwargs.get("entry_price", kwargs.get("price")),
+            metadata=kwargs.get("metadata", {}),
+        )
+
     def close_trade(self, trade_id: str, exit_price: float) -> None:
         with self.get_session() as session:
             try:

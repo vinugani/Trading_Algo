@@ -28,7 +28,7 @@ class MarketRegimeDetector:
         adx_period: int = 14,
         atr_period: int = 14,
         ema_period: int = 20,
-        trending_adx_threshold: float = 25.0,
+        trending_adx_threshold: float = 30.0,
         high_volatility_atr_pct: float = 0.01,
         low_volatility_atr_pct: float = 0.0025,
         ema_slope_threshold_pct: float = 0.0008,

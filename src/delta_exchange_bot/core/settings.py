@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     # Funding & Time-based closing
     enable_funding_awareness: bool = True
     funding_alert_threshold: float = 0.001  # 0.1% per 8h
-    max_holding_time_s: int = 86400  # 24 hours default
+    max_holding_time_s: int = 1800  # 30 minutes max for scalping
 
     enable_strategy_portfolio: bool = True
     enable_advanced_risk: bool = True

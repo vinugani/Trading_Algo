@@ -1083,6 +1083,7 @@ class ProfessionalTradingBot:
             "side": position_side,
             "size": size,
             "entry_price": signal.price,
+            "entry_ts": time.time(),
             "stop_loss": signal.stop_loss,
             "take_profit": signal.take_profit,
             "trailing_stop_pct": signal.trailing_stop_pct,
@@ -1213,6 +1214,15 @@ class ProfessionalTradingBot:
         requested_order_type = "market_or_limit_smart" if self.settings.enable_smart_order_routing else "limit_order"
 
         if self.settings.mode != "live":
+            self.db.save_trade(
+                trade_id=trade_id,
+                symbol=signal.symbol,
+                side=side,
+                size=size,
+                price=signal.price,
+                strategy_name=strategy_name,
+                metadata={"entry_order_type": "paper_limit"},
+            )
             self._record_order_row(
                 symbol=signal.symbol,
                 side=side,
@@ -1256,6 +1266,16 @@ class ProfessionalTradingBot:
         pre_ok, before_signed = self._validate_pre_execution(signal.symbol, side)
         if not pre_ok:
             return None
+
+        self.db.save_trade(
+            trade_id=trade_id,
+            symbol=signal.symbol,
+            side=side,
+            size=size,
+            price=signal.price,
+            strategy_name=strategy_name,
+            metadata={"entry_order_type": requested_order_type},
+        )
 
         start = time.perf_counter()
         try:
@@ -1540,6 +1560,47 @@ class ProfessionalTradingBot:
 
         self._on_realtime_price(symbol, price)
         if symbol in self._open_positions:
+            # Always check SL/TP/trailing stop even when not entering a new trade.
+            # This is the primary exit path for paper mode where WS may be unreliable.
+            current_price = indicators.get("price", 0.0)
+            if current_price > 0:
+                triggered = self.execution_engine.on_price_update(symbol, current_price)
+                if triggered:
+                    logger.info(
+                        "[%s] Protection triggered at price=%.4f reason=%s",
+                        symbol, current_price, triggered.get("reason", "unknown")
+                    )
+                    self._handle_exit(
+                        symbol=symbol,
+                        current_price=current_price,
+                        triggered=triggered,
+                    )
+
+            # Force-close positions held longer than max_holding_time_s
+            open_pos = self._open_positions.get(symbol)
+            if open_pos:
+                entry_ts = open_pos.get("entry_ts")
+                if entry_ts is None:
+                    # Backfill entry_ts if missing (positions loaded from DB won't have it)
+                    open_pos["entry_ts"] = time.time()
+                elif (time.time() - entry_ts) > self.settings.max_holding_time_s:
+                    logger.warning(
+                        "[%s] Max holding time exceeded (%.0fs). Force-closing position.",
+                        symbol, time.time() - entry_ts
+                    )
+                    current_price = indicators.get("price", 0.0)
+                    forced_exit = {
+                        "reason": "max_holding_time",
+                        "exit_side": "buy" if open_pos.get("side") == "short" else "sell",
+                        "size": open_pos.get("size", 0.0),
+                        "trigger_price": current_price,
+                        "trade_id": open_pos.get("trade_id"),
+                    }
+                    self._handle_exit(
+                        symbol=symbol,
+                        current_price=current_price,
+                        triggered=forced_exit,
+                    )
             self._last_no_trade_reason = "existing_open_position"
             return
 
