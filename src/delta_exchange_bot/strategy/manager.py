@@ -35,12 +35,12 @@ class StrategyManager:
         if regime == MarketRegime.TRENDING:
             return [self.trend_following, self.rsi_scalping]
         if regime == MarketRegime.RANGING:
-            return [self.rsi_scalping, self.mean_reversion]
+            return [self.mean_reversion, self.rsi_scalping]
         if regime == MarketRegime.HIGH_VOLATILITY:
             return [self.rsi_scalping, self.trend_following]
         if regime == MarketRegime.LOW_VOLATILITY:
-            return [self.rsi_scalping, self.mean_reversion]
-        return [self.rsi_scalping, self.mean_reversion]
+            return [self.mean_reversion, self.rsi_scalping]
+        return [self.mean_reversion, self.rsi_scalping]
 
     def generate_signal(self, symbol: str, candles: pd.DataFrame) -> tuple[Signal, str, str]:
         snapshot = self.regime_detector.detect(candles)

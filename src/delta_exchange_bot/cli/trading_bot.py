@@ -227,13 +227,13 @@ class MainTradingBot:
                 return str(value)
         return None
 
-    def _process_protection_triggers(self, symbol: str, current_price: float) -> None:
+    def _process_protection_triggers(self, symbol: str, current_price: float) -> bool:
         if symbol not in self._open_positions:
-            return
+            return False
 
         triggered = self.execution_engine.on_price_update(symbol, current_price)
         if not triggered:
-            return
+            return False
 
         logger.warning("Protection trigger executed for %s: %s", symbol, triggered)
         open_position = self._open_positions.pop(symbol, None)
@@ -269,6 +269,7 @@ class MainTradingBot:
         })
         self.db.close_position(symbol)
         self._recalculate_open_notional()
+        return True
 
     @classmethod
     def _default_stop_loss(cls, action: str, price: float) -> Optional[float]:
@@ -588,7 +589,9 @@ class MainTradingBot:
             f"{indicators['atr14']:.6f}" if pd.notna(indicators["atr14"]) else "nan",
         )
 
-        self._process_protection_triggers(symbol, indicators["price"])
+        if self._process_protection_triggers(symbol, indicators["price"]):
+            self._log_no_trade_reason(symbol, "protection_trigger_exit", details="entry skipped for current cycle")
+            return
         if symbol in self._open_positions:
             trade_id = self._open_positions[symbol].get("trade_id")
             logger.info("Skipping new entry for %s because position is already open", symbol)
