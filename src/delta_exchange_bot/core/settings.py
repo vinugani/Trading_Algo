@@ -56,8 +56,12 @@ class Settings(BaseSettings):
     order_size: float = 100.0
     max_positions: int = 5
     trade_frequency_s: int = 60
-    api_url: str = Field("https://api.india.delta.exchange", description="API base URL")
-    ws_url: str = Field("wss://socket.india.delta.exchange", description="WebSocket base URL")
+    #Live URLS
+    #api_url: str = Field("https://api.india.delta.exchange", description="API base URL")
+    #ws_url: str = Field("wss://socket.india.delta.exchange", description="WebSocket base URL")
+    #TestNetUrls
+    api_url: str = Field("https://cdn-ind.testnet.deltaex.org", description="API base URL")
+    ws_url: str = Field("wss://socket-ind.testnet.deltaex.org", description="WebSocket base URL")
     base_url: str | None = Field(
         None,
         description="Optional API base URL override (DELTA_BASE_URL)",
