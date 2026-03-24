@@ -23,13 +23,13 @@ class RealtimeMarketDataService:
         api_url: str,
         symbols: list[str],
         *,
-        reconnect_interval_s: int = 5,
+        reconnect_interval_s: int = 1,
         fallback_poll_interval_s: int = 2,
         max_ws_failures_before_backoff: int = 3,
-        ws_failure_backoff_s: int = 60,
-        ping_interval_s: int = 30,
+        ws_failure_backoff_s: int = 30,
+        ping_interval_s: int = 20,
         ping_timeout_s: int = 10,
-        stale_after_s: int = 45,
+        stale_after_s: int = 60,
         subscribe_builder: Optional[Callable[[list[str]], dict]] = None,
     ):
         self.ws_url = ws_url
@@ -247,6 +247,13 @@ class RealtimeMarketDataService:
         self._fallback_thread.start()
 
     def _on_open(self, ws) -> None:
+        if not self._is_active_ws(ws):
+            logger.warning("Ignoring stale WebSocket on_open callback for %s", self.ws_url)
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return
         with self._state_lock:
             self._ws_connected = True
             self._ws_failure_count = 0
@@ -266,6 +273,7 @@ class RealtimeMarketDataService:
                 reconnect_number,
                 len(self.symbols),
             )
+            logger.info("WebSocket resubscription successful for symbols=%s", ",".join(sorted(self.symbols)))
             self._restore_state_after_reconnect()
         except Exception as exc:
             self._remember_disconnect_reason(f"subscription_failed:{exc}", overwrite=True)
@@ -273,6 +281,8 @@ class RealtimeMarketDataService:
             self._request_reconnect(f"subscription_failed:{exc}")
 
     def _on_message(self, ws, message: str) -> None:
+        if not self._is_active_ws(ws):
+            return
         with self._state_lock:
             self._last_message_monotonic = time.monotonic()
         try:
@@ -305,10 +315,14 @@ class RealtimeMarketDataService:
             self._set_price(symbol, price)
 
     def _on_error(self, ws, error) -> None:
+        if not self._is_active_ws(ws):
+            return
         self._remember_disconnect_reason(f"error:{error}", overwrite=False)
         logger.warning("WebSocket error: %s", error)
 
     def _on_close(self, ws, close_status_code, close_msg) -> None:
+        if not self._is_active_ws(ws):
+            return
         with self._state_lock:
             self._ws_connected = False
             self._connected_since_monotonic = 0.0
@@ -323,6 +337,8 @@ class RealtimeMarketDataService:
             logger.warning("WebSocket disconnected: %s", reason)
 
     def _on_pong(self, ws, message: str) -> None:
+        if not self._is_active_ws(ws):
+            return
         with self._state_lock:
             self._last_pong_monotonic = time.monotonic()
 
@@ -361,6 +377,10 @@ class RealtimeMarketDataService:
             listener_count,
         )
 
+    def _is_active_ws(self, ws) -> bool:
+        with self._state_lock:
+            return self._ws is ws
+
     def _remember_disconnect_reason(self, reason: str, *, overwrite: bool) -> None:
         with self._state_lock:
             if overwrite or not self._disconnect_reason or self._disconnect_reason in {"not_connected", "connect_in_progress", "connected"}:
@@ -382,9 +402,9 @@ class RealtimeMarketDataService:
         return True
 
     def _compute_reconnect_delay(self, failure_count: int) -> float:
+        base_delay = max(1.0, float(self.reconnect_interval_s))
+        max_delay = max(base_delay, float(self.ws_failure_backoff_s))
         if failure_count <= 0:
-            return float(self.reconnect_interval_s)
-        delay = float(self.reconnect_interval_s) * (2 ** max(0, failure_count - 1))
-        if failure_count >= self.max_ws_failures_before_backoff:
-            delay = max(delay, float(self.ws_failure_backoff_s))
-        return min(float(self.ws_failure_backoff_s), delay)
+            return base_delay
+        delay = base_delay * (2 ** max(0, failure_count - 1))
+        return min(max_delay, delay)

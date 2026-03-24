@@ -86,11 +86,11 @@ class Settings(BaseSettings):
     )
 
     websocket_enabled: bool = True
-    websocket_reconnect_interval_s: int = 5
+    websocket_reconnect_interval_s: int = 1
     websocket_fallback_poll_interval_s: int = 2
-    websocket_ping_interval_s: int = 30
+    websocket_ping_interval_s: int = 20
     websocket_ping_timeout_s: int = 10
-    websocket_stale_after_s: int = 45
+    websocket_stale_after_s: int = 60
 
     enable_async_runner: bool = True
     enable_smart_order_routing: bool = True
@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     max_holding_time_s: int = 1800  # 30 minutes max for scalping
 
     enable_strategy_portfolio: bool = True
+    min_signal_confidence: float = 0.6
     enable_advanced_risk: bool = True
     api_circuit_breaker_failure_threshold: int = 5
     api_circuit_breaker_cooldown_s: int = 60

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import math
 import time
@@ -987,6 +988,21 @@ class ProfessionalTradingBot:
         volume = pd.to_numeric(candles.get("volume", pd.Series(dtype=float)), errors="coerce")
 
         ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1] if len(close) >= 20 else float("nan")
+        ema12_series = close.ewm(span=12, adjust=False).mean() if len(close) >= 12 else pd.Series(dtype=float)
+        ema26_series = close.ewm(span=26, adjust=False).mean() if len(close) >= 26 else pd.Series(dtype=float)
+        if not ema12_series.empty and not ema26_series.empty:
+            macd_series = ema12_series - ema26_series
+            macd = macd_series.iloc[-1]
+            if len(macd_series.dropna()) >= 9:
+                macd_signal = macd_series.ewm(span=9, adjust=False).mean().iloc[-1]
+                macd_histogram = macd - macd_signal
+            else:
+                macd_signal = float("nan")
+                macd_histogram = float("nan")
+        else:
+            macd = float("nan")
+            macd_signal = float("nan")
+            macd_histogram = float("nan")
         delta = close.diff()
         gains = delta.clip(lower=0)
         losses = -delta.clip(upper=0)
@@ -1028,6 +1044,9 @@ class ProfessionalTradingBot:
             "rsi": float(rsi) if not pd.isna(rsi) else float("nan"),
             "vwap": float(vwap) if not pd.isna(vwap) else float("nan"),
             "atr14": float(atr14) if not pd.isna(atr14) else float("nan"),
+            "macd": float(macd) if not pd.isna(macd) else float("nan"),
+            "macd_signal": float(macd_signal) if not pd.isna(macd_signal) else float("nan"),
+            "macd_histogram": float(macd_histogram) if not pd.isna(macd_histogram) else float("nan"),
         }
 
     def _generate_legacy_signal(self, symbol: str, candles: pd.DataFrame) -> Signal:
@@ -1086,8 +1105,13 @@ class ProfessionalTradingBot:
             metadata={"indicators": indicators},
         )
         logger.info(
-            "Signal Generated: {} | {} | Action: {} | Confidence: {:.4f} | Price: {:.2f} | Strategy: {}",
-            signal_id, signal.symbol, signal.action, float(signal.confidence), signal.price, strategy_name
+            "Signal Generated: %s | %s | Action: %s | Confidence: %.4f | Price: %.2f | Strategy: %s",
+            signal_id,
+            signal.symbol,
+            signal.action,
+            float(signal.confidence),
+            signal.price,
+            strategy_name,
         )
         return signal_id
 
@@ -1096,6 +1120,27 @@ class ProfessionalTradingBot:
             logger.info("No-trade for %s: reason=%s details=%s", symbol, reason, details)
         else:
             logger.info("No-trade for %s: reason=%s", symbol, reason)
+        self._structured_log(
+            "trade_rejected",
+            symbol=symbol,
+            reason=reason,
+            details=details,
+        )
+
+    @staticmethod
+    def _sanitize_log_value(value):
+        if isinstance(value, dict):
+            return {str(key): ProfessionalTradingBot._sanitize_log_value(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [ProfessionalTradingBot._sanitize_log_value(item) for item in value]
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        return value
+
+    def _structured_log(self, event: str, **fields) -> None:
+        payload = {"event": event}
+        payload.update({key: self._sanitize_log_value(val) for key, val in fields.items()})
+        logger.info(json.dumps(payload, separators=(",", ":"), sort_keys=True))
 
     def _validate_risk(self, signal: Signal, indicators: dict[str, float]) -> tuple[bool, float]:
         self._last_no_trade_reason = None
@@ -1735,13 +1780,27 @@ class ProfessionalTradingBot:
         
         price = indicators.get("price", 0.0)
         logger.info(
-            "[%s] Indicators calculated: price=%.2f ema20=%s rsi=%s vwap=%s atr14=%s",
+            "[%s] Indicators calculated: price=%.2f ema20=%s rsi=%s macd=%s macd_signal=%s vwap=%s atr14=%s",
             symbol,
             price,
             f"{indicators['ema20']:.4f}" if pd.notna(indicators.get("ema20")) else "nan",
             f"{indicators['rsi']:.2f}" if pd.notna(indicators.get("rsi")) else "nan",
+            f"{indicators['macd']:.6f}" if pd.notna(indicators.get("macd")) else "nan",
+            f"{indicators['macd_signal']:.6f}" if pd.notna(indicators.get("macd_signal")) else "nan",
             f"{indicators['vwap']:.4f}" if pd.notna(indicators.get("vwap")) else "nan",
             f"{indicators['atr14']:.4f}" if pd.notna(indicators.get("atr14")) else "nan",
+        )
+        self._structured_log(
+            "indicator_snapshot",
+            symbol=symbol,
+            price=price,
+            ema20=indicators.get("ema20"),
+            rsi=indicators.get("rsi"),
+            vwap=indicators.get("vwap"),
+            atr14=indicators.get("atr14"),
+            macd=indicators.get("macd"),
+            macd_signal=indicators.get("macd_signal"),
+            macd_histogram=indicators.get("macd_histogram"),
         )
 
         self._on_realtime_price(symbol, price)
@@ -1801,11 +1860,29 @@ class ProfessionalTradingBot:
             signal.action,
             float(signal.confidence),
         )
+        self._structured_log(
+            "strategy_decision",
+            symbol=symbol,
+            regime=regime,
+            strategy=strategy_name,
+            action=signal.action,
+            calculated_score=float(signal.confidence),
+            final_confidence=float(signal.confidence),
+            price=signal.price,
+            indicators={
+                "rsi": indicators.get("rsi"),
+                "ema20": indicators.get("ema20"),
+                "macd": indicators.get("macd"),
+                "macd_signal": indicators.get("macd_signal"),
+                "macd_histogram": indicators.get("macd_histogram"),
+            },
+        )
         
         if signal.action.lower() == "hold":
             details = (
                 f"regime={regime} strategy={strategy_name} confidence={float(signal.confidence):.4f} "
-                f"rsi={indicators.get('rsi')} ema20={indicators.get('ema20')} price={indicators.get('price')}"
+                f"rsi={indicators.get('rsi')} ema20={indicators.get('ema20')} macd={indicators.get('macd')} "
+                f"price={indicators.get('price')}"
             )
             logger.info(f"[{symbol}] Signal: HOLD (Confidence: {signal.confidence:.2f})")
             self._last_no_trade_reason = "strategy_signal_hold"
@@ -1813,6 +1890,29 @@ class ProfessionalTradingBot:
             return
         
         logger.info(f"[{symbol}] DETECTED SIGNAL: {signal.action.upper()} (Confidence: {signal.confidence:.2f})")
+        self._structured_log(
+            "trade_candidate",
+            symbol=symbol,
+            regime=regime,
+            strategy=strategy_name,
+            action=signal.action,
+            calculated_score=float(signal.confidence),
+            final_confidence=float(signal.confidence),
+            decision_reason="actionable_signal_generated",
+        )
+
+        min_confidence = max(0.0, min(1.0, float(self.settings.min_signal_confidence)))
+        if float(signal.confidence) < min_confidence:
+            self._last_no_trade_reason = "signal_confidence_below_threshold"
+            self._log_no_trade_reason(
+                symbol,
+                "signal_confidence_below_threshold",
+                details=(
+                    f"signal_confidence={float(signal.confidence):.4f} "
+                    f"threshold={min_confidence:.4f} regime={regime} strategy={strategy_name}"
+                ),
+            )
+            return
 
         if self.settings.mode == "live" and self._position_mismatch_detected(symbol):
             self._last_no_trade_reason = "position_mismatch"
