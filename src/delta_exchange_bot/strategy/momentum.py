@@ -1,4 +1,8 @@
+import logging
+
 from .base import Signal, Strategy
+
+logger = logging.getLogger(__name__)
 
 
 class MomentumStrategy(Strategy):
@@ -21,12 +25,30 @@ class MomentumStrategy(Strategy):
                 continue
 
             momentum = (current - avg_past) / avg_past
+            threshold = max(abs(float(self.threshold)), 1e-9)
+            score = max(0.0, (abs(momentum) - threshold) / threshold)
+            confidence = min(1.0, score)
 
             if momentum > self.threshold:
-                signals.append(Signal(symbol=symbol, action="buy", confidence=momentum, price=current))
+                action = "buy"
+                signals.append(Signal(symbol=symbol, action=action, confidence=confidence, price=current))
             elif momentum < -self.threshold:
-                signals.append(Signal(symbol=symbol, action="sell", confidence=-momentum, price=current))
+                action = "sell"
+                signals.append(Signal(symbol=symbol, action=action, confidence=confidence, price=current))
             else:
-                signals.append(Signal(symbol=symbol, action="hold", confidence=0.0, price=current))
+                action = "hold"
+                confidence = 0.0
+                signals.append(Signal(symbol=symbol, action=action, confidence=confidence, price=current))
+
+            logger.debug(
+                "[%s] Momentum score: current=%.4f avg_past=%.4f momentum=%.6f threshold=%.6f score=%.4f action=%s",
+                symbol,
+                current,
+                avg_past,
+                momentum,
+                float(self.threshold),
+                confidence,
+                action,
+            )
 
         return signals

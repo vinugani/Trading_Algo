@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     websocket_enabled: bool = True
     websocket_reconnect_interval_s: int = 5
     websocket_fallback_poll_interval_s: int = 2
-    websocket_ping_interval_s: int = 20
+    websocket_ping_interval_s: int = 30
     websocket_ping_timeout_s: int = 10
     websocket_stale_after_s: int = 45
 

@@ -1,4 +1,8 @@
+import logging
+
 from delta_exchange_bot.strategy.base import Signal, Strategy
+
+logger = logging.getLogger(__name__)
 
 
 class EMACrossoverStrategy(Strategy):
@@ -44,13 +48,21 @@ class EMACrossoverStrategy(Strategy):
                 continue
 
             denominator = abs(slow_ema) if slow_ema != 0 else 1.0
-            confidence = min(1.0, abs(fast_ema - slow_ema) / denominator)
+            ema_gap_pct = abs(fast_ema - slow_ema) / denominator
+            returns = [
+                abs((float(prices[idx]) - float(prices[idx - 1])) / float(prices[idx - 1]))
+                for idx in range(1, len(prices))
+                if float(prices[idx - 1]) != 0
+            ]
+            volatility_baseline = max((sum(returns) / len(returns)) if returns else 0.0, 1e-4)
+            confidence = min(1.0, ema_gap_pct / volatility_baseline)
 
             if fast_ema > slow_ema:
+                action = "buy"
                 signals.append(
                     Signal(
                         symbol=symbol,
-                        action="buy",
+                        action=action,
                         confidence=confidence,
                         price=current_price,
                         stop_loss=current_price * (1.0 - self.stop_loss_pct),
@@ -59,10 +71,11 @@ class EMACrossoverStrategy(Strategy):
                     )
                 )
             elif fast_ema < slow_ema:
+                action = "sell"
                 signals.append(
                     Signal(
                         symbol=symbol,
-                        action="sell",
+                        action=action,
                         confidence=confidence,
                         price=current_price,
                         stop_loss=current_price * (1.0 + self.stop_loss_pct),
@@ -71,12 +84,25 @@ class EMACrossoverStrategy(Strategy):
                     )
                 )
             else:
+                action = "hold"
+                confidence = 0.0
                 signals.append(
                     Signal(
                         symbol=symbol,
-                        action="hold",
-                        confidence=0.0,
+                        action=action,
+                        confidence=confidence,
                         price=current_price,
                     )
                 )
+            logger.debug(
+                "[%s] EMA crossover: price=%.4f fast_ema=%.4f slow_ema=%.4f gap_pct=%.6f baseline=%.6f score=%.4f action=%s",
+                symbol,
+                current_price,
+                float(fast_ema),
+                float(slow_ema),
+                float(ema_gap_pct),
+                volatility_baseline,
+                confidence,
+                action,
+            )
         return signals

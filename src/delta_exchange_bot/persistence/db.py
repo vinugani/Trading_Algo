@@ -307,6 +307,8 @@ class DatabaseManager:
                     "side": p.side.value,
                     "size": p.size,
                     "avg_entry_price": p.avg_entry_price,
+                    "stop_loss": p.stop_loss,
+                    "take_profit": p.take_profit,
                     "updated_at": p.updated_at.isoformat() if p.updated_at else None
                 }
                 for p in positions

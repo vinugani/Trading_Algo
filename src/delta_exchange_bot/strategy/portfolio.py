@@ -49,7 +49,8 @@ class PortfolioStrategy(Strategy):
                 signals = strategy.generate(market_data)
                 for sig in signals:
                     scores = symbol_scores[sig.symbol]
-                    scores[sig.action] += sig.confidence * weight
+                    weighted_score = float(sig.confidence) * float(weight)
+                    scores[sig.action] += weighted_score
                     scores["prices"].append(sig.price)
                     if sig.stop_loss is not None:
                         scores["stop_losses"].append(sig.stop_loss)
@@ -57,6 +58,15 @@ class PortfolioStrategy(Strategy):
                         scores["take_profits"].append(sig.take_profit)
                     if sig.trailing_stop_pct is not None:
                         scores["trailing_stops"].append(sig.trailing_stop_pct)
+                    logger.debug(
+                        "[%s] Portfolio component: strategy=%s action=%s raw_confidence=%.4f weight=%.2f weighted_score=%.4f",
+                        sig.symbol,
+                        strategy.__class__.__name__,
+                        sig.action,
+                        float(sig.confidence),
+                        float(weight),
+                        weighted_score,
+                    )
             except Exception as exc:
                 logger.warning(
                     f"Sub-strategy {strategy.__class__.__name__} failed in PortfolioStrategy: {exc}"
@@ -105,11 +115,23 @@ class PortfolioStrategy(Strategy):
                     scores["trailing_stops"]
                 )
 
+            final_confidence = min(1.0, max(0.0, float(best_score)))
+            logger.debug(
+                "[%s] Portfolio signal score: buy=%.4f sell=%.4f hold=%.4f threshold=%.4f final_action=%s final_confidence=%.4f",
+                symbol,
+                float(buy_score),
+                float(sell_score),
+                float(hold_score),
+                CONFIDENCE_THRESHOLD,
+                best_action,
+                final_confidence,
+            )
+
             final_signals.append(
                 Signal(
                     symbol=symbol,
                     action=best_action,
-                    confidence=best_score,
+                    confidence=final_confidence,
                     price=avg_price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,

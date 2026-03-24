@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from delta_exchange_bot.strategy.base import Signal
@@ -7,6 +9,8 @@ from delta_exchange_bot.strategy.market_regime import MarketRegime
 from delta_exchange_bot.strategy.market_regime import MarketRegimeSnapshot
 
 from .base import CandleStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class MeanReversionStrategy(CandleStrategy):
@@ -16,7 +20,7 @@ class MeanReversionStrategy(CandleStrategy):
     def __init__(
         self,
         lookback: int = 20,
-        z_entry: float = 0.8,
+        z_entry: float = 0.5,
         stop_loss_pct: float = 0.004,
         take_profit_pct: float = 0.006,
         trailing_stop_pct: float = 0.003,
@@ -30,10 +34,18 @@ class MeanReversionStrategy(CandleStrategy):
     def generate(self, symbol: str, candles: pd.DataFrame, regime: MarketRegimeSnapshot) -> Signal:
         close = pd.to_numeric(candles.get("close", pd.Series(dtype=float)), errors="coerce").dropna()
         if close.empty:
+            logger.debug("[%s] Mean reversion hold: no close data", symbol)
             return Signal(symbol=symbol, action="hold", confidence=0.0, price=0.0)
         if not self.can_run(regime):
+            logger.debug("[%s] Mean reversion hold: regime=%s not allowed", symbol, regime.regime.value)
             return Signal(symbol=symbol, action="hold", confidence=0.0, price=float(close.iloc[-1]))
         if len(close) < self.lookback:
+            logger.debug(
+                "[%s] Mean reversion hold: insufficient candles=%s required=%s",
+                symbol,
+                len(close),
+                self.lookback,
+            )
             return Signal(symbol=symbol, action="hold", confidence=0.0, price=float(close.iloc[-1]))
 
         window = close.iloc[-self.lookback :]
@@ -41,9 +53,21 @@ class MeanReversionStrategy(CandleStrategy):
         std = float(window.std(ddof=0))
         price = float(close.iloc[-1])
         if std <= 0:
+            logger.debug("[%s] Mean reversion hold: std=%.6f", symbol, std)
             return Signal(symbol=symbol, action="hold", confidence=0.0, price=price)
         z = (price - mean) / std
-        confidence = min(1.0, abs(z) / 3.0)
+        confidence = min(1.0, max(0.0, (abs(z) - self.z_entry) / max(self.z_entry, 0.1) + 0.25))
+
+        logger.debug(
+            "[%s] Mean reversion: price=%.4f mean=%.4f std=%.6f z=%.4f threshold=%.4f confidence=%.4f",
+            symbol,
+            price,
+            mean,
+            std,
+            z,
+            self.z_entry,
+            confidence,
+        )
 
         if z <= -self.z_entry:
             return Signal(
@@ -65,4 +89,10 @@ class MeanReversionStrategy(CandleStrategy):
                 take_profit=price * (1.0 - self.take_profit_pct),
                 trailing_stop_pct=self.trailing_stop_pct,
             )
+        logger.debug(
+            "[%s] Mean reversion hold: z-score %.4f did not cross +/- %.4f",
+            symbol,
+            z,
+            self.z_entry,
+        )
         return Signal(symbol=symbol, action="hold", confidence=0.0, price=price)

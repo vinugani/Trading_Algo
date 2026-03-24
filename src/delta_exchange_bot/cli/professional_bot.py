@@ -97,6 +97,9 @@ class ProfessionalTradingBot:
                 symbols=settings.trade_symbols,
                 reconnect_interval_s=settings.websocket_reconnect_interval_s,
                 fallback_poll_interval_s=settings.websocket_fallback_poll_interval_s,
+                ping_interval_s=settings.websocket_ping_interval_s,
+                ping_timeout_s=settings.websocket_ping_timeout_s,
+                stale_after_s=settings.websocket_stale_after_s,
             )
             self.market_data_service.add_listener(self._on_realtime_price)
 
@@ -147,10 +150,20 @@ class ProfessionalTradingBot:
 
     def _load_open_positions_from_db(self) -> None:
         restored = {}
-        for symbol in self.settings.trade_symbols:
-            pos = self.db.get_active_position(symbol)
-            if pos:
-                restored[symbol] = pos
+        for pos in self.db.get_all_active_positions():
+            symbol = self._normalize_symbol(pos.get("symbol"))
+            if not symbol:
+                continue
+            restored[symbol] = {
+                "symbol": symbol,
+                "trade_id": pos.get("trade_id"),
+                "side": pos.get("side"),
+                "size": float(pos.get("size", 0.0) or 0.0),
+                "entry_price": float(pos.get("avg_entry_price", 0.0) or 0.0),
+                "stop_loss": pos.get("stop_loss"),
+                "take_profit": pos.get("take_profit"),
+                "source": "db_restore",
+            }
         self._local_cache_positions = dict(restored)
         self._open_positions = self._local_cache_positions
         self._recalculate_open_notional()
@@ -324,6 +337,180 @@ class ProfessionalTradingBot:
             "fetched_at": time.time(),
         }
 
+    def _fetch_all_exchange_position_snapshots(self) -> Optional[dict[str, dict]]:
+        if self.settings.mode != "live":
+            return {}
+        start = time.perf_counter()
+        try:
+            payload = self.client.get_positions()
+            self.safety.breaker.record_success()
+        except Exception:
+            self.safety.breaker.record_failure()
+            self.metrics.record_api_error("/v2/positions")
+            return None
+        finally:
+            self.metrics.observe_api_latency("/v2/positions", time.perf_counter() - start)
+
+        rows = self._extract_rows(payload)
+        grouped_rows: dict[str, list[dict]] = defaultdict(list)
+        for row in rows:
+            symbol = self._extract_symbol_from_position_row(row)
+            if not symbol:
+                continue
+            grouped_rows[symbol].append(row)
+
+        snapshots: dict[str, dict] = {}
+        for symbol, symbol_rows in grouped_rows.items():
+            net_signed_size = 0.0
+            weighted_entry = 0.0
+            for row in symbol_rows:
+                signed = self._extract_signed_size_from_position_row(row)
+                if abs(signed) <= self.settings.position_sync_tolerance:
+                    continue
+                entry = self._extract_entry_price_from_position_row(row)
+                net_signed_size += signed
+                if entry > 0:
+                    weighted_entry += abs(signed) * entry
+            abs_size = abs(net_signed_size)
+            if abs_size <= self.settings.position_sync_tolerance:
+                continue
+            side = "long" if net_signed_size > 0 else "short"
+            entry_price = (weighted_entry / abs_size) if weighted_entry > 0 else 0.0
+            snapshots[symbol] = {
+                "symbol": symbol,
+                "signed_size": net_signed_size,
+                "size": abs_size,
+                "side": side,
+                "entry_price": entry_price,
+                "fetched_at": time.time(),
+            }
+        return snapshots
+
+    def _tracked_position_symbols(self, *, include_exchange_cache: bool = True) -> set[str]:
+        symbols = {self._normalize_symbol(s) for s in self.settings.trade_symbols}
+        symbols.update(self._normalize_symbol(s) for s in self._local_cache_positions.keys())
+        if include_exchange_cache:
+            symbols.update(self._normalize_symbol(s) for s in self._exchange_state_positions.keys())
+        return {symbol for symbol in symbols if symbol}
+
+    def _log_position_snapshot(self, symbol: str, *, reason: str) -> None:
+        symbol_u = self._normalize_symbol(symbol)
+        local = self._local_cache_positions.get(symbol_u)
+        exchange = self._exchange_state_positions.get(symbol_u)
+        logger.info(
+            "Position snapshot symbol=%s reason=%s exchange=%s local=%s",
+            symbol_u,
+            reason,
+            exchange or {"symbol": symbol_u, "side": "flat", "size": 0.0, "entry_price": 0.0},
+            local or {"symbol": symbol_u, "side": "flat", "size": 0.0, "entry_price": 0.0},
+        )
+
+    def _apply_exchange_snapshot(
+        self,
+        symbol: str,
+        snapshot: dict,
+        *,
+        reason: str,
+        preferred_trade_id: Optional[str] = None,
+        preferred_strategy_name: Optional[str] = None,
+        protection_signal: Optional[Signal] = None,
+    ) -> bool:
+        symbol_u = self._normalize_symbol(symbol)
+        self._exchange_state_positions[symbol_u] = snapshot
+        previous = self._local_cache_positions.get(symbol_u, {})
+        self._log_position_snapshot(symbol_u, reason=f"{reason}:before_apply")
+
+        signed_size = float(snapshot.get("signed_size", 0.0) or 0.0)
+        if abs(signed_size) <= self.settings.position_sync_tolerance:
+            if symbol_u in self._local_cache_positions:
+                logger.warning(
+                    "Position sync flattening local cache symbol=%s reason=%s previous_size=%s",
+                    symbol_u,
+                    reason,
+                    previous.get("size"),
+                )
+            self._local_cache_positions.pop(symbol_u, None)
+            self.db.close_position(symbol_u)
+            self.execution_engine.clear_protection(symbol_u)
+            self._recalculate_open_notional()
+            self._log_position_snapshot(symbol_u, reason=f"{reason}:after_flatten")
+            logger.info("Position sync event symbol=%s exchange_size=0 reason=%s", symbol_u, reason)
+            return True
+
+        side = "long" if signed_size > 0 else "short"
+        abs_size = abs(signed_size)
+        entry_price = float(snapshot.get("entry_price", 0.0) or 0.0)
+        if entry_price <= 0:
+            entry_price = float(previous.get("entry_price", 0.0) or previous.get("avg_entry_price", 0.0) or 0.0)
+        stop_loss = previous.get("stop_loss")
+        take_profit = previous.get("take_profit")
+        trailing_stop_pct = previous.get("trailing_stop_pct")
+        if protection_signal is not None:
+            if stop_loss is None:
+                stop_loss = protection_signal.stop_loss
+            if take_profit is None:
+                take_profit = protection_signal.take_profit
+            if trailing_stop_pct is None:
+                trailing_stop_pct = protection_signal.trailing_stop_pct
+
+        trade_id = (
+            preferred_trade_id
+            or str(previous.get("trade_id") or "")
+            or self._new_trade_id(symbol_u)
+        )
+        strategy_name = (
+            preferred_strategy_name
+            or str(previous.get("strategy_name") or "")
+            or "exchange_synced"
+        )
+        realized_accum = float(previous.get("realized_pnl_accum", 0.0) or 0.0)
+        entry_order_type = str(previous.get("entry_order_type", "market_order"))
+
+        local_state = {
+            "trade_id": trade_id,
+            "side": side,
+            "size": abs_size,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "trailing_stop_pct": trailing_stop_pct,
+            "strategy_name": strategy_name,
+            "realized_pnl_accum": realized_accum,
+            "entry_order_type": entry_order_type,
+            "source": "exchange_sync",
+        }
+        self._local_cache_positions[symbol_u] = local_state
+        self.db.save_trade(
+            trade_id=trade_id,
+            symbol=symbol_u,
+            side=side,
+            size=abs_size,
+            entry_price=entry_price,
+            strategy_name=strategy_name,
+            metadata={"source": "exchange_sync", "reason": reason},
+        )
+        self.db.update_position({
+            "symbol": symbol_u,
+            "trade_id": trade_id,
+            "side": side,
+            "size": abs_size,
+            "avg_entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit
+        })
+        self._refresh_protection_for_symbol(symbol_u)
+        self._recalculate_open_notional()
+        self._log_position_snapshot(symbol_u, reason=f"{reason}:after_apply")
+        logger.info(
+            "Position sync event symbol=%s side=%s size=%s entry=%s reason=%s",
+            symbol_u,
+            side,
+            abs_size,
+            entry_price,
+            reason,
+        )
+        return True
+
     def _refresh_protection_for_symbol(self, symbol: str) -> None:
         position = self._local_cache_positions.get(symbol)
         if not position:
@@ -380,87 +567,50 @@ class ProfessionalTradingBot:
         if snapshot is None:
             logger.critical("POSITION_SYNC_FAILED symbol=%s reason=%s", symbol_u, reason)
             return False
-        self._exchange_state_positions[symbol_u] = snapshot
-
-        previous = self._local_cache_positions.get(symbol_u, {})
-        signed_size = float(snapshot.get("signed_size", 0.0) or 0.0)
-        if abs(signed_size) <= self.settings.position_sync_tolerance:
-            if symbol_u in self._local_cache_positions:
-                logger.warning(
-                    "Position sync flattening local cache symbol=%s reason=%s previous_size=%s",
-                    symbol_u,
-                    reason,
-                    previous.get("size"),
-                )
-            self._local_cache_positions.pop(symbol_u, None)
-            self.db.close_position(symbol_u)
-            self.execution_engine.clear_protection(symbol_u)
-            self._recalculate_open_notional()
-            logger.info("Position sync event symbol=%s exchange_size=0 reason=%s", symbol_u, reason)
-            return True
-
-        side = "long" if signed_size > 0 else "short"
-        abs_size = abs(signed_size)
-        entry_price = float(snapshot.get("entry_price", 0.0) or 0.0)
-        if entry_price <= 0:
-            entry_price = float(previous.get("entry_price", 0.0) or 0.0)
-        stop_loss = previous.get("stop_loss")
-        take_profit = previous.get("take_profit")
-        trailing_stop_pct = previous.get("trailing_stop_pct")
-        if protection_signal is not None:
-            if stop_loss is None:
-                stop_loss = protection_signal.stop_loss
-            if take_profit is None:
-                take_profit = protection_signal.take_profit
-            if trailing_stop_pct is None:
-                trailing_stop_pct = protection_signal.trailing_stop_pct
-
-        trade_id = (
-            preferred_trade_id
-            or str(previous.get("trade_id") or "")
-            or self._new_trade_id(symbol_u)
-        )
-        strategy_name = (
-            preferred_strategy_name
-            or str(previous.get("strategy_name") or "")
-            or "exchange_synced"
-        )
-        realized_accum = float(previous.get("realized_pnl_accum", 0.0) or 0.0)
-        entry_order_type = str(previous.get("entry_order_type", "market_order"))
-
-        local_state = {
-            "trade_id": trade_id,
-            "side": side,
-            "size": abs_size,
-            "entry_price": entry_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "trailing_stop_pct": trailing_stop_pct,
-            "strategy_name": strategy_name,
-            "realized_pnl_accum": realized_accum,
-            "entry_order_type": entry_order_type,
-            "source": "exchange_sync",
-        }
-        self._local_cache_positions[symbol_u] = local_state
-        self.db.update_position({
-            "symbol": symbol_u,
-            "trade_id": trade_id,
-            "side": side,
-            "size": abs_size,
-            "avg_entry_price": entry_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit
-        })
-        self._refresh_protection_for_symbol(symbol_u)
-        self._recalculate_open_notional()
-        logger.info(
-            "Position sync event symbol=%s side=%s size=%s entry=%s reason=%s",
+        return self._apply_exchange_snapshot(
             symbol_u,
-            side,
-            abs_size,
-            entry_price,
-            reason,
+            snapshot,
+            reason=reason,
+            preferred_trade_id=preferred_trade_id,
+            preferred_strategy_name=preferred_strategy_name,
+            protection_signal=protection_signal,
         )
+
+    def reconcile_positions_with_exchange(self, *, reason: str = "cycle_reconciliation") -> bool:
+        if self.settings.mode != "live":
+            return True
+        snapshots = self._fetch_all_exchange_position_snapshots()
+        if snapshots is None:
+            logger.critical("POSITION_RECONCILIATION_FAILED reason=%s", reason)
+            return False
+
+        tracked_symbols = self._tracked_position_symbols(include_exchange_cache=False)
+        tracked_symbols.update(snapshots.keys())
+        self._exchange_state_positions = dict(snapshots)
+        logger.info(
+            "Starting position reconciliation reason=%s tracked_symbols=%s exchange_positions=%s",
+            reason,
+            sorted(tracked_symbols),
+            sorted(snapshots.keys()),
+        )
+        if not snapshots:
+            logger.warning("Exchange returned no open positions during reconciliation reason=%s", reason)
+
+        for symbol in sorted(tracked_symbols):
+            snapshot = snapshots.get(symbol)
+            if snapshot is None:
+                snapshot = {
+                    "symbol": symbol,
+                    "signed_size": 0.0,
+                    "size": 0.0,
+                    "side": "flat",
+                    "entry_price": 0.0,
+                    "fetched_at": time.time(),
+                }
+            if not self._apply_exchange_snapshot(symbol, snapshot, reason=reason):
+                return False
+
+        logger.info("Position reconciliation completed reason=%s", reason)
         return True
 
     def _sync_position_if_due(self, symbol: str, reason: str, min_interval_s: float = 2.0) -> bool:
@@ -476,6 +626,7 @@ class ProfessionalTradingBot:
 
     def validate_position_consistency(self, symbol: str) -> bool:
         symbol_u = self._normalize_symbol(symbol)
+        self._log_position_snapshot(symbol_u, reason="consistency_check")
         local_signed = self._local_signed_size(symbol_u)
         exchange_signed = self._exchange_signed_size(symbol_u)
         mismatch = self.safety.detect_position_mismatch(
@@ -666,11 +817,11 @@ class ProfessionalTradingBot:
     def startup_safety_check(self) -> None:
         if self.settings.mode != "live":
             return
-        symbols = {self._normalize_symbol(s) for s in self.settings.trade_symbols}
-        symbols.update(self._normalize_symbol(s) for s in self._local_cache_positions.keys())
-        for symbol in sorted(symbols):
-            if symbol:
-                self.sync_position_with_exchange(symbol, reason="startup")
+        if not self.reconcile_positions_with_exchange(reason="startup"):
+            self.halt_trading("startup_position_reconciliation_failed")
+            return
+
+        symbols = self._tracked_position_symbols()
 
         if self.settings.cancel_leftover_orders_on_startup:
             cancelled = self.cancel_open_orders()
@@ -891,11 +1042,35 @@ class ProfessionalTradingBot:
         return signals[0] if signals else Signal(symbol=symbol, action="hold", confidence=0.0, price=float(prices[-1]))
 
     def generate_strategy_signal(self, symbol: str, candles: pd.DataFrame) -> tuple[Signal, str, str]:
-        use_portfolio = self.settings.enable_strategy_portfolio or self.settings.strategy_name.lower() == "portfolio"
-        if use_portfolio:
+        strategy_name = self.settings.strategy_name.lower()
+        if strategy_name == "portfolio":
+            signal = self._generate_legacy_signal(symbol, candles)
+            logger.debug(
+                "[%s] Portfolio strategy output: action=%s confidence=%.4f",
+                symbol,
+                signal.action,
+                float(signal.confidence),
+            )
+            return signal, "portfolio", "portfolio"
+        if self.settings.enable_strategy_portfolio:
             signal, regime, strategy_name = self.strategy_manager.generate_signal(symbol=symbol, candles=candles)
+            logger.debug(
+                "[%s] Regime strategy output: regime=%s strategy=%s action=%s confidence=%.4f",
+                symbol,
+                regime,
+                strategy_name,
+                signal.action,
+                float(signal.confidence),
+            )
             return signal, regime, strategy_name
         signal = self._generate_legacy_signal(symbol, candles)
+        logger.debug(
+            "[%s] Legacy strategy output: strategy=%s action=%s confidence=%.4f",
+            symbol,
+            self.settings.strategy_name,
+            signal.action,
+            float(signal.confidence),
+        )
         return signal, "legacy", self.settings.strategy_name
 
     def _save_signal(self, signal: Signal, strategy_name: str, regime: str, indicators: dict[str, float]) -> str:
@@ -914,10 +1089,16 @@ class ProfessionalTradingBot:
             metadata={"indicators": indicators},
         )
         logger.info(
-            "Signal Generated: {} | {} | Action: {} | Price: {:.2f} | Strategy: {}",
-            signal_id, signal.symbol, signal.action, signal.price, strategy_name
+            "Signal Generated: {} | {} | Action: {} | Confidence: {:.4f} | Price: {:.2f} | Strategy: {}",
+            signal_id, signal.symbol, signal.action, float(signal.confidence), signal.price, strategy_name
         )
         return signal_id
+
+    def _log_no_trade_reason(self, symbol: str, reason: str, *, details: Optional[str] = None) -> None:
+        if details:
+            logger.info("No-trade for %s: reason=%s details=%s", symbol, reason, details)
+        else:
+            logger.info("No-trade for %s: reason=%s", symbol, reason)
 
     def _validate_risk(self, signal: Signal, indicators: dict[str, float]) -> tuple[bool, float]:
         self._last_no_trade_reason = None
@@ -1556,7 +1737,15 @@ class ProfessionalTradingBot:
             return
         
         price = indicators.get("price", 0.0)
-        logger.info(f"[{symbol}] Indicators calculated. Current Price: {price:.2f}")
+        logger.info(
+            "[%s] Indicators calculated: price=%.2f ema20=%s rsi=%s vwap=%s atr14=%s",
+            symbol,
+            price,
+            f"{indicators['ema20']:.4f}" if pd.notna(indicators.get("ema20")) else "nan",
+            f"{indicators['rsi']:.2f}" if pd.notna(indicators.get("rsi")) else "nan",
+            f"{indicators['vwap']:.4f}" if pd.notna(indicators.get("vwap")) else "nan",
+            f"{indicators['atr14']:.4f}" if pd.notna(indicators.get("atr14")) else "nan",
+        )
 
         self._on_realtime_price(symbol, price)
         if symbol in self._open_positions:
@@ -1607,10 +1796,23 @@ class ProfessionalTradingBot:
         signal, regime, strategy_name = self.generate_strategy_signal(symbol, candles)
         signal = self._with_default_protection(signal)
         self._save_signal(signal=signal, strategy_name=strategy_name, regime=regime, indicators=indicators)
+        logger.info(
+            "[%s] Strategy decision: regime=%s strategy=%s action=%s confidence=%.4f",
+            symbol,
+            regime,
+            strategy_name,
+            signal.action,
+            float(signal.confidence),
+        )
         
         if signal.action.lower() == "hold":
+            details = (
+                f"regime={regime} strategy={strategy_name} confidence={float(signal.confidence):.4f} "
+                f"rsi={indicators.get('rsi')} ema20={indicators.get('ema20')} price={indicators.get('price')}"
+            )
             logger.info(f"[{symbol}] Signal: HOLD (Confidence: {signal.confidence:.2f})")
             self._last_no_trade_reason = "strategy_signal_hold"
+            self._log_no_trade_reason(symbol, "strategy_signal_hold", details=details)
             return
         
         logger.info(f"[{symbol}] DETECTED SIGNAL: {signal.action.upper()} (Confidence: {signal.confidence:.2f})")
@@ -1621,6 +1823,8 @@ class ProfessionalTradingBot:
 
         ok, size = self._validate_risk(signal, indicators)
         if not ok:
+            reason = self._last_no_trade_reason or "unknown_risk_rejection"
+            self._log_no_trade_reason(symbol, "risk_validation_failed", details=reason)
             return
 
         try:
@@ -1660,6 +1864,12 @@ class ProfessionalTradingBot:
                 logger.info(f"Cycle {cycle + 1} started: analyzing {len(self.settings.trade_symbols)} symbols...")
                 if self.settings.mode == "live":
                     await asyncio.to_thread(self._refresh_live_equity)
+                    if not await asyncio.to_thread(
+                        self.reconcile_positions_with_exchange,
+                        reason=f"cycle_{cycle + 1}",
+                    ):
+                        self.halt_trading(f"cycle_position_reconciliation_failed:{cycle + 1}")
+                        break
                 tasks = [self.process_symbol(symbol) for symbol in self.settings.trade_symbols]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 for symbol, result in zip(self.settings.trade_symbols, results):
