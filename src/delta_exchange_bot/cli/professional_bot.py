@@ -132,6 +132,26 @@ class ProfessionalTradingBot:
         if self.settings.mode == "live":
             self._initialize_live_equity()
             self.startup_safety_check()
+        elif self.settings.mode in {"paper", "backtest"}:
+            # Also fetch real balance in paper/backtest so kill-switch thresholds
+            # are calibrated against actual account size, not a fictional $100,000.
+            try:
+                payload = self.client.get_account_balance()
+                balance = self._extract_available_usd_balance(payload)
+                if balance > 0:
+                    self.account_equity = balance
+                    self.start_of_day_equity = balance
+                    self._peak_equity = balance
+                    logger.info(
+                        "Paper/backtest equity initialised from exchange balance=%.2f",
+                        balance,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Could not fetch real balance for paper mode — using default %.2f: %s",
+                    self.account_equity,
+                    exc,
+                )
         self._update_metrics_from_equity()
 
     @staticmethod
@@ -513,6 +533,27 @@ class ProfessionalTradingBot:
             )
         if trailing_stop_pct is None:
             trailing_stop_pct = self.DEFAULT_TRAILING_STOP_PCT
+
+        # Safety gate: refuse to adopt an exchange-synced position whose notional
+        # exceeds max_leverage × account_equity.  An orphaned 1 BTC position on a
+        # $106 account causes a $400+ loss on a 0.6% move, which immediately blows
+        # through the 5% daily loss limit and fires the kill switch.
+        if entry_price > 0 and self.account_equity > 0:
+            synced_notional = abs_size * entry_price
+            max_allowed_notional = self.account_equity * self.settings.max_leverage
+            if synced_notional > max_allowed_notional:
+                logger.critical(
+                    "Exchange-synced position REJECTED — notional=%.2f exceeds "
+                    "max_allowed=%.2f (equity=%.2f × max_leverage=%.1f). "
+                    "The position exists on the exchange but the account cannot "
+                    "safely absorb its risk. Close it manually on the exchange.",
+                    synced_notional,
+                    max_allowed_notional,
+                    self.account_equity,
+                    self.settings.max_leverage,
+                )
+                self._log_position_snapshot(symbol_u, reason=f"{reason}:rejected_over_notional")
+                return False
 
         trade_id = (
             preferred_trade_id
@@ -1014,8 +1055,12 @@ class ProfessionalTradingBot:
             if balance > 0:
                 self.account_equity = balance
                 self._peak_equity = max(self._peak_equity, balance)
-        except Exception:
-            return
+        except Exception as exc:
+            logger.warning(
+                "_refresh_live_equity failed — kill-switch will use stale equity=%.2f: %s",
+                self.account_equity,
+                exc,
+            )
 
     @staticmethod
     def _safe_client_order_id(raw: str, max_len: int = 32) -> str:
@@ -1918,8 +1963,20 @@ class ProfessionalTradingBot:
             real_pnl,
         )
 
-        self.account_equity += real_pnl
+        # Register realized PnL with the advanced risk manager first so the
+        # daily kill-switch denominator (start_of_day_equity) is always correct.
         self.advanced_risk.register_realized_pnl(real_pnl)
+        if self.settings.mode == "live":
+            # In live mode, fetch the authoritative balance from the exchange
+            # immediately instead of applying an internal delta.  The naive
+            # "+= real_pnl" approach makes account_equity temporarily negative
+            # (e.g. $106 account - $425 loss = -$318) which fires the daily
+            # kill switch prematurely, before the next cycle's refresh can
+            # correct it.
+            self._refresh_live_equity()
+        else:
+            # Paper/backtest: no exchange to query, simulate the PnL delta.
+            self.account_equity += real_pnl
         self._update_metrics_from_equity()
 
         is_flat = remaining_size <= self.settings.position_sync_tolerance
@@ -1940,7 +1997,7 @@ class ProfessionalTradingBot:
                 )
         else:
             self._update_trade_stats(pnl=realized_accum + real_pnl, strategy_name=strategy_name)
-            self.db.close_trade_record(trade_id=trade_id, exit_price=exit_price)
+            self.db.close_trade_record(trade_id=trade_id, exit_price=exit_price, net_pnl=realized_accum + real_pnl)
 
         self.db.save_execution(
             trade_id=trade_id,
@@ -1962,8 +2019,8 @@ class ProfessionalTradingBot:
                 "gross_pnl": gross_pnl,
                 "real_pnl": real_pnl,
                 "fees": {
-                    "entry_fee": entry_fee,
-                    "exit_fee": exit_fee,
+                    "entry_fee": self.fee_manager.calculate_entry_fee(entry_price, realized_size, entry_order_type),
+                    "exit_fee": self.fee_manager.calculate_exit_fee(exit_price, realized_size, exit_order_type),
                     "total_fee": total_fee,
                 },
                 "remaining_size": remaining_size,
@@ -2261,11 +2318,36 @@ class ProfessionalTradingBot:
             logger.exception("Unexpected order execution failure for %s", symbol)
 
     async def _risk_monitor(self) -> None:
+        _kill_switch_date: Optional[str] = None
         while not self._stop_requested:
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            # Reset kill switch at the start of a new calendar day
+            if self._kill_switch_triggered and _kill_switch_date and _kill_switch_date != today:
+                logger.warning(
+                    "Daily kill switch reset for new trading day: previous_date=%s new_date=%s",
+                    _kill_switch_date, today,
+                )
+                self._kill_switch_triggered = False
+                self.advanced_risk.reset_daily_pnl()
+                _kill_switch_date = None
+
             if self.safety.check_daily_loss_kill_switch(self.account_equity, self.start_of_day_equity):
+                if not self._kill_switch_triggered:
+                    logger.critical(
+                        "Daily kill switch ACTIVATED — no new trades until %s. Bot continues running.",
+                        today,
+                    )
                 self._kill_switch_triggered = True
+                _kill_switch_date = today
             if self.advanced_risk.daily_kill_switch_triggered(self.start_of_day_equity):
+                if not self._kill_switch_triggered:
+                    logger.critical(
+                        "Advanced risk kill switch ACTIVATED — no new trades until %s. Bot continues running.",
+                        today,
+                    )
                 self._kill_switch_triggered = True
+                _kill_switch_date = today
             await asyncio.sleep(3)
 
     async def run_async(self, max_cycles: Optional[int] = None, sleep_interval_s: Optional[int] = None) -> None:
@@ -2281,7 +2363,6 @@ class ProfessionalTradingBot:
         try:
             while (
                 (max_cycles is None or cycle < max_cycles)
-                and not self._kill_switch_triggered
                 and not self._stop_requested
             ):
                 if self._shutdown_requested_via_file():

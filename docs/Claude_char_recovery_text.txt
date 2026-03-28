@@ -1,0 +1,7 @@
+Context: We are building a production algo trading bot for Delta Exchange India (Python, testnet environment). Check your memory files for full project context — specifically project_session_fixes.md for what was done last, and project_known_issues.md for current status.
+
+Where we are: Phase 2 is complete. All critical and high bugs are fixed. The bot runs continuously without crashing (kill switch no longer hard-exits). Ready to start Phase 3.
+
+Before starting work: Read memory, check git status, and look at the latest log file in logs/ to understand the current bot state.
+
+Today I want to work on: [describe your task here — e.g. "start Phase 3 strategy #1: VWAP Deviation" or "fix position sizing over-leverage issue" or "run the bot and analyse what happens"]

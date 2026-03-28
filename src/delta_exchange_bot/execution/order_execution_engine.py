@@ -88,7 +88,7 @@ class OrderExecutionEngine:
             # For true slippage control on Delta, use Limit orders.
         
         logger.info("Executing market order: symbol=%s side=%s size=%s reduce_only=%s", symbol, side, size, reduce_only)
-        return self.client.place_order(
+        response = self.client.place_order(
             symbol=symbol,
             side=side,
             size=size,
@@ -96,6 +96,7 @@ class OrderExecutionEngine:
             reduce_only=reduce_only,
             client_order_id=self._safe_client_order_id(client_order_id),
         )
+        return self._wait_for_fill(response)
 
     @retry_on_exception()
     def execute_limit_order(
@@ -120,7 +121,7 @@ class OrderExecutionEngine:
             price,
             time_in_force,
         )
-        return self.client.place_order(
+        response = self.client.place_order(
             symbol=symbol,
             side=side,
             size=size,
@@ -131,6 +132,7 @@ class OrderExecutionEngine:
             reduce_only=reduce_only,
             client_order_id=self._safe_client_order_id(client_order_id),
         )
+        return self._wait_for_fill(response)
 
     def place_stop_loss(
         self,
@@ -143,12 +145,33 @@ class OrderExecutionEngine:
         state = self._ensure_state(symbol, position_side, size, reference_price=stop_price, trade_id=trade_id)
         state.stop_loss = stop_price
 
-        # NOTE: Native exchange stop orders (stop_market_order / take_profit_market_order)
-        # are rejected by the Delta Exchange API with HTTP 400 — the /v2/orders endpoint
-        # only accepts limit_order and market_order; conditional orders require a separate
-        # bracket/conditional order endpoint not yet integrated.
-        # Protection is tracked in-memory and triggered by on_price_update() each cycle.
-        # TODO Phase 3: integrate /v2/orders/bracket for native exchange-side SL/TP.
+        # Attempt native exchange-side stop-loss order so it survives a bot crash.
+        # Falls back to memory-only tracking if the exchange rejects the order.
+        if self.client is not None:
+            exit_side = "sell" if state.side == "long" else "buy"
+            sl_client_id = self._safe_client_order_id(f"{trade_id or symbol}-sl")
+            try:
+                resp = self.client.place_conditional_order(
+                    symbol=symbol,
+                    side=exit_side,
+                    size=size,
+                    stop_price=stop_price,
+                    order_type="stop_loss_order",
+                    client_order_id=sl_client_id,
+                    reduce_only=True,
+                )
+                order_id = self._extract_exchange_order_id(resp)
+                if order_id:
+                    state.stop_order_id = order_id
+                    logger.info(
+                        "Native SL order placed: symbol=%s order_id=%s stop=%s",
+                        symbol, order_id, stop_price,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Native SL order rejected — using in-memory fallback: symbol=%s stop=%s error=%s",
+                    symbol, stop_price, exc,
+                )
 
         logger.info("Registered stop loss: symbol=%s side=%s stop=%s size=%s", symbol, state.side, stop_price, size)
         return state
@@ -164,8 +187,33 @@ class OrderExecutionEngine:
         state = self._ensure_state(symbol, position_side, size, reference_price=target_price, trade_id=trade_id)
         state.take_profit = target_price
 
-        # NOTE: Same as place_stop_loss — native take-profit orders are in-memory only.
-        # TODO Phase 3: integrate /v2/orders/bracket for native exchange-side SL/TP.
+        # Attempt native exchange-side take-profit order so it survives a bot crash.
+        # Falls back to memory-only tracking if the exchange rejects the order.
+        if self.client is not None:
+            exit_side = "sell" if state.side == "long" else "buy"
+            tp_client_id = self._safe_client_order_id(f"{trade_id or symbol}-tp")
+            try:
+                resp = self.client.place_conditional_order(
+                    symbol=symbol,
+                    side=exit_side,
+                    size=size,
+                    stop_price=target_price,
+                    order_type="take_profit_order",
+                    client_order_id=tp_client_id,
+                    reduce_only=True,
+                )
+                order_id = self._extract_exchange_order_id(resp)
+                if order_id:
+                    state.tp_order_id = order_id
+                    logger.info(
+                        "Native TP order placed: symbol=%s order_id=%s target=%s",
+                        symbol, order_id, target_price,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Native TP order rejected — using in-memory fallback: symbol=%s target=%s error=%s",
+                    symbol, target_price, exc,
+                )
 
         logger.info("Registered take profit: symbol=%s side=%s target=%s size=%s", symbol, state.side, target_price, size)
         return state
@@ -491,6 +539,53 @@ class OrderExecutionEngine:
             if state.extreme_price is None:
                 state.extreme_price = reference_price
         return state
+
+    _FILL_TERMINAL: frozenset = frozenset({"closed", "filled", "cancelled", "canceled", "complete"})
+
+    def _wait_for_fill(
+        self,
+        order_response: dict,
+        max_polls: int = 4,
+        poll_interval_s: float = 1.5,
+    ) -> dict:
+        """Poll the exchange until the order reaches a terminal state.
+
+        Market orders on Delta Exchange typically fill within 1-2 s.
+        Polls up to max_polls times before returning the original response
+        so the caller is never blocked indefinitely.
+        Paper mode (client=None) returns immediately.
+        """
+        if self.client is None:
+            return order_response
+
+        order_id = self._extract_exchange_order_id(order_response)
+        if not order_id:
+            return order_response
+
+        result = order_response.get("result", {}) if isinstance(order_response, dict) else {}
+        status = str(result.get("state") or result.get("status") or "").lower()
+        if status in self._FILL_TERMINAL:
+            return order_response
+
+        for attempt in range(1, max_polls + 1):
+            time.sleep(poll_interval_s)
+            try:
+                fresh = self.client.get_order(order_id)
+                fresh_result = fresh.get("result", {}) if isinstance(fresh, dict) else {}
+                fresh_status = str(fresh_result.get("state") or fresh_result.get("status") or "").lower()
+                logger.debug("Fill poll attempt=%d order_id=%s status=%s", attempt, order_id, fresh_status)
+                if fresh_status in self._FILL_TERMINAL:
+                    if fresh_status in {"cancelled", "canceled"}:
+                        logger.warning("Order cancelled by exchange: order_id=%s", order_id)
+                    else:
+                        logger.info("Order fill confirmed: order_id=%s status=%s", order_id, fresh_status)
+                    return fresh
+            except Exception as exc:
+                logger.warning("Fill confirmation poll failed: order_id=%s attempt=%d error=%s", order_id, attempt, exc)
+                break
+
+        logger.warning("Order fill not confirmed after %d polls: order_id=%s", max_polls, order_id)
+        return order_response
 
     @staticmethod
     def _extract_exchange_order_id(order_response: Optional[dict]) -> Optional[str]:

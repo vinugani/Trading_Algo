@@ -220,7 +220,14 @@ class DatabaseManager:
                 return trade.entry_time.timestamp()
             return None
 
-    def close_trade(self, trade_id: str, exit_price: float) -> None:
+    def close_trade(self, trade_id: str, exit_price: float, net_pnl: Optional[float] = None) -> None:
+        """Close a trade record.
+
+        net_pnl — fee-inclusive realized PnL.  When provided this is stored
+        directly in pnl_raw so the DB matches what the risk manager tracks.
+        When omitted, gross PnL (price-difference only) is calculated as a
+        fallback — this will differ from the fee-inclusive value by the taker fee.
+        """
         with self.get_session() as session:
             try:
                 trade = session.query(Trade).filter(Trade.trade_id == trade_id).first()
@@ -228,16 +235,18 @@ class DatabaseManager:
                     trade.exit_price = exit_price
                     trade.exit_time = datetime.now(timezone.utc)
                     trade.status = TradeStatus.CLOSED
-                    
-                    # Calculate PnL
-                    if trade.side == PositionSide.LONG:
+
+                    if net_pnl is not None:
+                        # Preferred: caller passes fee-inclusive realized PnL
+                        trade.pnl_raw = net_pnl
+                    elif trade.side == PositionSide.LONG:
                         trade.pnl_raw = (exit_price - trade.entry_price) * trade.size
                     else:
                         trade.pnl_raw = (trade.entry_price - exit_price) * trade.size
-                    
-                    if trade.entry_price and trade.size:
+
+                    if trade.entry_price and trade.size and trade.entry_price * trade.size != 0:
                         trade.pnl_pct = (trade.pnl_raw / (trade.entry_price * trade.size)) * 100
-                    
+
                     session.commit()
                     logger.info(f"Trade {trade_id} closed at {exit_price}. PnL: {trade.pnl_raw}")
             except Exception as e:
@@ -417,9 +426,9 @@ class DatabaseManager:
         }
         self.update_position(data)
 
-    def close_trade_record(self, trade_id: str, exit_price: float):
+    def close_trade_record(self, trade_id: str, exit_price: float, net_pnl: Optional[float] = None):
         """Alias for close_trade."""
-        self.close_trade(trade_id, exit_price)
+        self.close_trade(trade_id, exit_price, net_pnl=net_pnl)
 
     def save_execution(self, **kwargs):
         """Alias for log_execution."""

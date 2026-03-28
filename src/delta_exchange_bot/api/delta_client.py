@@ -391,3 +391,36 @@ class DeltaClient:
             reduce_only=reduce_only,
             client_order_id=client_order_id,
         )
+
+    def place_conditional_order(
+        self,
+        symbol: str,
+        side: str,
+        size: float,
+        stop_price: float,
+        order_type: str,
+        client_order_id: Optional[str] = None,
+        reduce_only: bool = True,
+    ) -> Dict[str, Any]:
+        """Place a native exchange-side conditional order (SL or TP).
+
+        order_type must be one of:
+          - "stop_loss_order"    — triggers a market exit when price moves against position
+          - "take_profit_order"  — triggers a market exit when price reaches target
+
+        stop_price is the trigger price. reduce_only=True ensures it can only close
+        an existing position, never open a new one.
+        """
+        resolved_product_id = self._resolve_product_id(symbol)
+        normalized_size = self._normalize_order_size(symbol, size)
+        body: Dict[str, Any] = {
+            "product_id": int(resolved_product_id) if str(resolved_product_id).isdigit() else resolved_product_id,
+            "size": normalized_size,
+            "side": side,
+            "order_type": order_type,
+            "stop_price": str(stop_price),
+            "reduce_only": str(reduce_only).lower(),
+        }
+        if client_order_id:
+            body["client_order_id"] = client_order_id
+        return self._request("POST", "/v2/orders", payload=body, auth=True)
