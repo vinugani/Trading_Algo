@@ -18,6 +18,7 @@ from delta_exchange_bot.risk.risk_management import calculate_position_size, val
 from delta_exchange_bot.strategy.base import Signal, Strategy
 from delta_exchange_bot.strategy.ema_crossover import EMACrossoverStrategy
 from delta_exchange_bot.strategy.momentum import MomentumStrategy
+from delta_exchange_bot.strategy.portfolio import PortfolioStrategy
 from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,8 @@ class MainTradingBot:
             return RSIScalpingStrategy()
         if normalized == "ema_crossover":
             return EMACrossoverStrategy()
+        if normalized == "portfolio":
+            return PortfolioStrategy()
         raise ValueError(f"Unsupported strategy_name={strategy_name}")
 
     def fetch_market_data(self, symbol: str) -> pd.DataFrame:

@@ -41,9 +41,26 @@ class FeeManager:
         return abs(notional) * abs(funding_rate) * periods
 
     def calculate_total_fee(self, trade: dict[str, Any]) -> float:
+        """Return total all-in cost: entry fee + exit fee + funding cost.
+
+        Funding cost is included when the trade dict contains both
+        ``funding_rate`` (float, per-8h rate from ticker) and
+        ``holding_seconds`` (float, seconds the position was open).
+        Both fields are optional; if absent funding cost is 0.
+        """
         entry_price = float(trade.get("entry_price", 0.0) or 0.0)
         exit_price = float(trade.get("exit_price", 0.0) or 0.0)
         size = float(trade.get("size", 0.0) or 0.0)
         entry_type = str(trade.get("entry_order_type", "market_order"))
         exit_type = str(trade.get("exit_order_type", "market_order"))
-        return self.calculate_entry_fee(entry_price, size, entry_type) + self.calculate_exit_fee(exit_price, size, exit_type)
+        trading_fees = self.calculate_entry_fee(entry_price, size, entry_type) + self.calculate_exit_fee(exit_price, size, exit_type)
+
+        funding_rate = trade.get("funding_rate")
+        holding_seconds = trade.get("holding_seconds")
+        if funding_rate is not None and holding_seconds is not None:
+            notional = entry_price * size
+            funding_fees = self.calculate_funding_cost(notional, float(funding_rate), float(holding_seconds))
+        else:
+            funding_fees = 0.0
+
+        return trading_fees + funding_fees

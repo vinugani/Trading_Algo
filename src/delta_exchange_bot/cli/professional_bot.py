@@ -7,6 +7,7 @@ import logging
 import math
 import time
 import uuid
+from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
@@ -970,16 +971,39 @@ class ProfessionalTradingBot:
         return 0.0
 
     def _initialize_live_equity(self) -> None:
+        from datetime import timezone as _tz
+        today = datetime.now(_tz.utc).strftime("%Y-%m-%d")
+
+        # Fetch current balance from exchange first.
+        balance = 0.0
         try:
             payload = self.client.get_account_balance()
             balance = self._extract_available_usd_balance(payload)
-            if balance > 0:
-                self.account_equity = balance
-                self.start_of_day_equity = balance
-                self._peak_equity = balance
         except Exception:
-            # Keep defaults if account endpoint is temporarily unavailable.
             pass
+
+        if balance > 0:
+            self.account_equity = balance
+            self._peak_equity = max(self._peak_equity, balance)
+
+        # Restore today's start_of_day_equity from DB so the daily kill switch
+        # is not defeated by a bot restart mid-day.
+        saved_sod = self.db.get_float_state("start_of_day_equity", date_str=today)
+        if saved_sod is not None and saved_sod > 0:
+            self.start_of_day_equity = saved_sod
+            logger.info(
+                "Restored start_of_day_equity=%.2f from DB (today=%s) — "
+                "daily kill switch baseline preserved across restart",
+                saved_sod, today,
+            )
+        elif balance > 0:
+            # First startup today — record current balance as the day's baseline.
+            self.start_of_day_equity = balance
+            self.db.set_float_state("start_of_day_equity", balance, date_str=today)
+            logger.info(
+                "Initialized start_of_day_equity=%.2f for today=%s",
+                balance, today,
+            )
 
     def _refresh_live_equity(self) -> None:
         if self.settings.mode != "live":
@@ -1851,36 +1875,43 @@ class ProfessionalTradingBot:
             gross_pnl = 0.0
 
         exit_order_type = "market_order"
-        entry_fee = self.fee_manager.calculate_entry_fee(entry_price, realized_size, entry_order_type)
-        exit_fee = self.fee_manager.calculate_exit_fee(exit_price, realized_size, exit_order_type)
-        total_fee = entry_fee + exit_fee
 
-        # Funding cost — only meaningful for live perpetuals
-        funding_cost = 0.0
+        # Build trade dict for unified fee calculation (entry + exit + funding)
+        trade_dict: dict = {
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "size": realized_size,
+            "entry_order_type": entry_order_type,
+            "exit_order_type": exit_order_type,
+        }
         if self.settings.enable_funding_awareness and self.client is not None:
             entry_ts = open_pos.get("entry_ts")
             holding_s = (time.time() - entry_ts) if entry_ts else 0.0
             if holding_s > 0:
-                funding_rate = self.client.get_funding_rate(symbol)
-                if funding_rate is not None:
-                    notional = exit_price * realized_size
-                    funding_cost = self.fee_manager.calculate_funding_cost(
-                        notional, funding_rate, holding_s
-                    )
-                    if funding_cost > 0:
-                        logger.info(
-                            "Funding cost symbol=%s funding_rate=%.6f holding_s=%.0f funding_cost=%.4f",
-                            symbol, funding_rate, holding_s, funding_cost,
-                        )
+                fetched_rate = self.client.get_funding_rate(symbol)
+                if fetched_rate is not None:
+                    trade_dict["funding_rate"] = fetched_rate
+                    trade_dict["holding_seconds"] = holding_s
 
-        real_pnl = gross_pnl - total_fee - funding_cost
+        total_fee = self.fee_manager.calculate_total_fee(trade_dict)
+        funding_cost = 0.0
+        if "funding_rate" in trade_dict:
+            notional = entry_price * realized_size
+            funding_cost = self.fee_manager.calculate_funding_cost(
+                notional, trade_dict["funding_rate"], trade_dict["holding_seconds"]
+            )
+            if funding_cost > 0:
+                logger.info(
+                    "Funding cost symbol=%s funding_rate=%.6f holding_s=%.0f funding_cost=%.4f",
+                    symbol, trade_dict["funding_rate"], trade_dict["holding_seconds"], funding_cost,
+                )
+
+        real_pnl = gross_pnl - total_fee
         logger.info(
-            "Fee calculation symbol=%s trade_id=%s entry_fee=%s exit_fee=%s "
-            "total_fee=%s funding_cost=%s gross_pnl=%s real_pnl=%s",
+            "Fee calculation symbol=%s trade_id=%s total_fee=%s "
+            "funding_cost=%s gross_pnl=%s real_pnl=%s",
             symbol,
             trade_id,
-            entry_fee,
-            exit_fee,
             total_fee,
             funding_cost,
             gross_pnl,

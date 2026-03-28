@@ -93,6 +93,13 @@ chronyc tracking
 +++++++++++++++++++++++++
 Logs
 +++++++++++++++++++++++++
+python scripts/run_bot.py --mode live --strategy portfolio
+will automatically:
+
+File	Contents	Where
+logs/bot_20260328_HHMMSS.log	All logs (INFO+) for this session	New file per run
+logs/errors.log	WARNING/ERROR/CRITICAL only	Rolling, appended across runs
+
 # Change log level to DEBUG
 python scripts/run_bot.py --mode live --strategy portfolio --log-level DEBUG
 
@@ -101,3 +108,24 @@ python scripts/run_bot.py --mode live --strategy portfolio --log-dir /tmp/bot_lo
 
 # Disable file logging (console only)
 python scripts/run_bot.py --mode live --strategy portfolio --log-dir ""
+
++++++++++++++++++++++++++++
+Cleaning and Backup the db
+++++++++++++++++++++++++++++
+Normal usage — backup both DBs then clean with confirmation prompt:
+
+
+python scripts/backup_and_clean_db.py
+Backup only (no data loss):
+
+
+python scripts/backup_and_clean_db.py --backup-only
+Target one database only:
+
+
+python scripts/backup_and_clean_db.py --db live
+python scripts/backup_and_clean_db.py --db paper
+Skip backup, just clean (dangerous — use only if you already have a backup):
+
+
+python scripts/backup_and_clean_db.py --clean-only

@@ -1,9 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum as PyEnum
 from typing import Optional
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Enum, ForeignKey, Index, Text
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 class Base(DeclarativeBase):
     pass
@@ -40,7 +44,7 @@ class Signal(Base):
     take_profit = Column(Float)
     regime = Column(String(32))
     metadata_json = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
 
 class Order(Base):
     __tablename__ = "orders"
@@ -59,8 +63,8 @@ class Order(Base):
     avg_fill_price = Column(Float)
     error_message = Column(Text)
     metadata_json = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow, index=True)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=datetime.utcnow)
 
     trade = relationship("Trade", back_populates="orders")
 
@@ -76,7 +80,7 @@ class Trade(Base):
     size = Column(Float, nullable=False)
     entry_price = Column(Float)
     exit_price = Column(Float)
-    entry_time = Column(DateTime, default=datetime.utcnow)
+    entry_time = Column(DateTime, default=_utcnow)
     exit_time = Column(DateTime)
     pnl_raw = Column(Float)
     pnl_pct = Column(Float)
@@ -102,7 +106,7 @@ class Position(Base):
     # a bot restart and can be cancelled when the position closes.
     stop_order_id = Column(String(64), nullable=True)
     tp_order_id = Column(String(64), nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=datetime.utcnow)
 
 class ExecutionLog(Base):
     __tablename__ = "execution_logs"
@@ -119,13 +123,13 @@ class ExecutionLog(Base):
     status = Column(String(32))
     reason = Column(Text)
     metadata_json = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
 
 class PerformanceMetric(Base):
     __tablename__ = "performance_metrics"
 
     id = Column(Integer, primary_key=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime, default=_utcnow, index=True)
     mode = Column(String(16), index=True)
     total_trades = Column(Integer)
     win_rate = Column(Float)
@@ -134,3 +138,16 @@ class PerformanceMetric(Base):
     realized_pnl = Column(Float)
     unrealized_pnl = Column(Float)
     metadata_json = Column(JSON)
+
+
+class BotState(Base):
+    """Persistent key-value store for bot runtime state that must survive restarts.
+
+    Example keys: "start_of_day_equity" — baseline equity for the daily kill switch.
+    """
+    __tablename__ = "bot_state"
+
+    key = Column(String(64), primary_key=True)
+    value_float = Column(Float, nullable=True)
+    date_str = Column(String(16), nullable=True)  # "YYYY-MM-DD" — for day-scoped values
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)

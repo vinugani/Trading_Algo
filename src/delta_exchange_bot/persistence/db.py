@@ -1,13 +1,13 @@
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 from sqlalchemy import create_engine, select, update, delete
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 
-from delta_exchange_bot.persistence.models import Base, Trade, Position, Order, Signal, ExecutionLog, PerformanceMetric, OrderStatus, PositionSide, TradeStatus
+from delta_exchange_bot.persistence.models import Base, Trade, Position, Order, Signal, ExecutionLog, PerformanceMetric, BotState, OrderStatus, PositionSide, TradeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ class DatabaseManager:
                 trade = session.query(Trade).filter(Trade.trade_id == trade_id).first()
                 if trade:
                     trade.exit_price = exit_price
-                    trade.exit_time = datetime.utcnow()
+                    trade.exit_time = datetime.now(timezone.utc)
                     trade.status = TradeStatus.CLOSED
                     
                     # Calculate PnL
@@ -450,3 +450,35 @@ class DatabaseManager:
             "status": kwargs.get("status", "pending"),
             "metadata": kwargs.get("metadata"),
         })
+
+    # --- Bot State (key-value, survives restarts) ---
+
+    def get_float_state(self, key: str, date_str: Optional[str] = None) -> Optional[float]:
+        """Return a persisted float value for key.
+
+        If date_str is given, only return the value when its stored date matches —
+        this prevents stale values from a previous calendar day being used.
+        """
+        with self.get_session() as session:
+            row = session.query(BotState).filter(BotState.key == key).first()
+            if row is None:
+                return None
+            if date_str is not None and row.date_str != date_str:
+                return None
+            return row.value_float
+
+    def set_float_state(self, key: str, value: float, date_str: Optional[str] = None) -> None:
+        """Persist a float value under key (upsert)."""
+        with self.get_session() as session:
+            try:
+                row = session.query(BotState).filter(BotState.key == key).first()
+                if row is None:
+                    row = BotState(key=key, value_float=value, date_str=date_str)
+                    session.add(row)
+                else:
+                    row.value_float = value
+                    row.date_str = date_str
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error setting bot state {key}: {e}")
