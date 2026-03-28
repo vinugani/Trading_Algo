@@ -2285,9 +2285,12 @@ class ProfessionalTradingBot:
                 reason="signal_confidence_below_threshold",
                 details=(
                     f"signal_confidence={float(signal.confidence):.4f} "
-                    f"threshold={min_confidence:.4f} regime={regime} strategy={strategy_name}; continuing_to_risk_validation"
+                    f"threshold={min_confidence:.4f} regime={regime} strategy={strategy_name}"
                 ),
             )
+            self._last_no_trade_reason = "signal_confidence_below_threshold"
+            self._log_no_trade_reason(symbol, "signal_confidence_below_threshold")
+            return
 
         if self.settings.mode == "live" and self._position_mismatch_detected(symbol):
             self._last_no_trade_reason = "position_mismatch"
