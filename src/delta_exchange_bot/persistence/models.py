@@ -98,6 +98,10 @@ class Position(Base):
     take_profit = Column(Float)
     liquidation_price = Column(Float)
     margin = Column(Float)
+    # Exchange order IDs for native SL/TP orders — persisted so they survive
+    # a bot restart and can be cancelled when the position closes.
+    stop_order_id = Column(String(64), nullable=True)
+    tp_order_id = Column(String(64), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ExecutionLog(Base):

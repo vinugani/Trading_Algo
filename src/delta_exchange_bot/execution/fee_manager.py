@@ -26,6 +26,20 @@ class FeeManager:
     def calculate_exit_fee(self, price: float, size: float, order_type: str = "market_order") -> float:
         return max(0.0, float(price)) * max(0.0, float(size)) * self.get_fee_rate(order_type)
 
+    def calculate_funding_cost(
+        self, notional: float, funding_rate: float, holding_seconds: float
+    ) -> float:
+        """Funding is charged every 8 hours on perpetuals.
+
+        cost = notional × |rate| × (seconds_held / 28800)
+        Always positive — represents a cost regardless of long/short,
+        because at extreme rates the position pays (not receives) funding.
+        """
+        if notional <= 0 or holding_seconds <= 0:
+            return 0.0
+        periods = holding_seconds / 28_800.0  # 8h = 28,800s
+        return abs(notional) * abs(funding_rate) * periods
+
     def calculate_total_fee(self, trade: dict[str, Any]) -> float:
         entry_price = float(trade.get("entry_price", 0.0) or 0.0)
         exit_price = float(trade.get("exit_price", 0.0) or 0.0)

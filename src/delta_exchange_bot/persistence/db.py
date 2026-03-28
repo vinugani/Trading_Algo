@@ -109,7 +109,9 @@ class DatabaseManager:
                         size=pos_data["size"],
                         avg_entry_price=pos_data["avg_entry_price"],
                         stop_loss=pos_data.get("stop_loss"),
-                        take_profit=pos_data.get("take_profit")
+                        take_profit=pos_data.get("take_profit"),
+                        stop_order_id=pos_data.get("stop_order_id"),
+                        tp_order_id=pos_data.get("tp_order_id"),
                     )
                     session.add(pos)
                 else:
@@ -119,6 +121,10 @@ class DatabaseManager:
                     pos.avg_entry_price = pos_data["avg_entry_price"]
                     pos.stop_loss = pos_data.get("stop_loss")
                     pos.take_profit = pos_data.get("take_profit")
+                    if pos_data.get("stop_order_id") is not None:
+                        pos.stop_order_id = pos_data["stop_order_id"]
+                    if pos_data.get("tp_order_id") is not None:
+                        pos.tp_order_id = pos_data["tp_order_id"]
                 session.commit()
             except Exception as e:
                 session.rollback()
@@ -205,6 +211,14 @@ class DatabaseManager:
             entry_price=kwargs.get("entry_price", kwargs.get("price")),
             metadata=kwargs.get("metadata", {}),
         )
+
+    def get_trade_entry_time(self, trade_id: str) -> float | None:
+        """Return the Unix timestamp of a trade's entry_time, or None if not found."""
+        with self.get_session() as session:
+            trade = session.query(Trade).filter(Trade.trade_id == trade_id).first()
+            if trade and trade.entry_time:
+                return trade.entry_time.timestamp()
+            return None
 
     def close_trade(self, trade_id: str, exit_price: float) -> None:
         with self.get_session() as session:
@@ -309,7 +323,9 @@ class DatabaseManager:
                     "avg_entry_price": p.avg_entry_price,
                     "stop_loss": p.stop_loss,
                     "take_profit": p.take_profit,
-                    "updated_at": p.updated_at.isoformat() if p.updated_at else None
+                    "stop_order_id": p.stop_order_id,
+                    "tp_order_id": p.tp_order_id,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
                 }
                 for p in positions
             ]
@@ -388,15 +404,16 @@ class DatabaseManager:
 
     def upsert_open_position_state(self, **kwargs):
         """Alias for update_position."""
-        # Map old argument names if necessary
         data = {
             "symbol": kwargs.get("symbol"),
             "trade_id": kwargs.get("trade_id"),
             "side": kwargs.get("side"),
             "size": kwargs.get("size"),
-            "avg_entry_price": kwargs.get("entry_price"), # legacy used entry_price
+            "avg_entry_price": kwargs.get("entry_price"),  # legacy used entry_price
             "stop_loss": kwargs.get("stop_loss"),
-            "take_profit": kwargs.get("take_profit")
+            "take_profit": kwargs.get("take_profit"),
+            "stop_order_id": kwargs.get("stop_order_id"),
+            "tp_order_id": kwargs.get("tp_order_id"),
         }
         self.update_position(data)
 

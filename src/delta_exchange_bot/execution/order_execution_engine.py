@@ -23,6 +23,9 @@ class ProtectionState:
     trailing_stop_pct: Optional[float] = None
     trailing_stop_price: Optional[float] = None
     extreme_price: Optional[float] = None
+    # Exchange order IDs — stored so we can cancel orphaned orders on close
+    stop_order_id: Optional[str] = None
+    tp_order_id: Optional[str] = None
 
 
 class OrderExecutionEngine:
@@ -145,16 +148,21 @@ class OrderExecutionEngine:
             exit_side = "sell" if position_side.lower() == "long" else "buy"
             client_order_id = self._safe_client_order_id(f"{trade_id or symbol}-sl")
             try:
-                self.client.place_order(
+                resp = self.client.place_order(
                     symbol=symbol,
                     side=exit_side,
                     size=size,
                     stop_price=stop_price,
                     order_type="stop_market_order",
                     reduce_only=True,
-                    client_order_id=client_order_id
+                    client_order_id=client_order_id,
                 )
-                logger.info("Placed native stop-loss order: symbol=%s stop=%s", symbol, stop_price)
+                # Store exchange order ID so we can cancel it on position close
+                state.stop_order_id = self._extract_exchange_order_id(resp)
+                logger.info(
+                    "Placed native stop-loss order: symbol=%s stop=%s exchange_order_id=%s",
+                    symbol, stop_price, state.stop_order_id,
+                )
             except Exception as e:
                 logger.error("Failed to place native stop-loss: %s. Falling back to in-memory protection.", e)
 
@@ -173,20 +181,25 @@ class OrderExecutionEngine:
         state.take_profit = target_price
 
         if self.client:
-            # Place native take profit market order (or limit depending on exchange support, stop_market with stop_price works for TP too if triggered)
+            # Place native take profit market order on exchange
             exit_side = "sell" if position_side.lower() == "long" else "buy"
             client_order_id = self._safe_client_order_id(f"{trade_id or symbol}-tp")
             try:
-                self.client.place_order(
+                resp = self.client.place_order(
                     symbol=symbol,
                     side=exit_side,
                     size=size,
                     stop_price=target_price,
                     order_type="take_profit_market_order",
                     reduce_only=True,
-                    client_order_id=client_order_id
+                    client_order_id=client_order_id,
                 )
-                logger.info("Placed native take-profit order: symbol=%s target=%s", symbol, target_price)
+                # Store exchange order ID so we can cancel it on position close
+                state.tp_order_id = self._extract_exchange_order_id(resp)
+                logger.info(
+                    "Placed native take-profit order: symbol=%s target=%s exchange_order_id=%s",
+                    symbol, target_price, state.tp_order_id,
+                )
             except Exception as e:
                 logger.error("Failed to place native take-profit: %s. Falling back to in-memory protection.", e)
 
@@ -254,6 +267,25 @@ class OrderExecutionEngine:
         )
         trade_id = state.trade_id or f"{symbol}-unknown"
         exit_client_order_id = self._safe_client_order_id(f"{trade_id}-exit-{reason}")
+
+        # Cancel the sibling exchange order before placing the exit.
+        # e.g. SL triggered → cancel the TP order (and vice-versa) so it
+        # cannot re-open the position on the next tick.
+        sibling_order_id = state.tp_order_id if stop_triggered else state.stop_order_id
+        sibling_label = "take-profit" if stop_triggered else "stop-loss"
+        if self.client is not None and sibling_order_id:
+            try:
+                self.client.cancel_order(order_id=sibling_order_id)
+                logger.info(
+                    "Cancelled sibling %s order on protection trigger: symbol=%s order_id=%s",
+                    sibling_label, symbol, sibling_order_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not cancel sibling %s order: symbol=%s order_id=%s error=%s",
+                    sibling_label, symbol, sibling_order_id, e,
+                )
+
         if self.client is None:
             order_response = {
                 "paper": True,
@@ -283,8 +315,63 @@ class OrderExecutionEngine:
             "order": order_response,
         }
 
+    def cancel_protection_orders(self, symbol: str) -> None:
+        """Cancel any open exchange SL/TP orders for this symbol.
+
+        Must be called whenever a position is closed — either by a protection
+        trigger firing or by an external/manual close — to prevent orphaned
+        orders from accidentally re-opening a position on the next price move.
+        """
+        state = self._protection.get(symbol)
+        if state is None or self.client is None:
+            return
+
+        for label, order_id in (("stop-loss", state.stop_order_id), ("take-profit", state.tp_order_id)):
+            if order_id:
+                try:
+                    self.client.cancel_order(order_id=order_id)
+                    logger.info(
+                        "Cancelled exchange %s order: symbol=%s order_id=%s",
+                        label, symbol, order_id,
+                    )
+                except Exception as e:
+                    # Log but don't raise — position is already closing, best-effort cancel
+                    logger.warning(
+                        "Could not cancel exchange %s order: symbol=%s order_id=%s error=%s",
+                        label, symbol, order_id, e,
+                    )
+
     def clear_protection(self, symbol: str) -> None:
+        """Cancel exchange orders then remove in-memory protection state."""
+        self.cancel_protection_orders(symbol)
         self._protection.pop(symbol, None)
+
+    def get_protection_order_ids(self, symbol: str) -> tuple[Optional[str], Optional[str]]:
+        """Return (stop_order_id, tp_order_id) for a symbol, or (None, None) if not tracked."""
+        state = self._protection.get(symbol)
+        if state is None:
+            return None, None
+        return state.stop_order_id, state.tp_order_id
+
+    def restore_protection_order_ids(
+        self,
+        symbol: str,
+        stop_order_id: Optional[str],
+        tp_order_id: Optional[str],
+    ) -> None:
+        """Reload persisted exchange order IDs into ProtectionState after a bot restart.
+
+        Called after place_stop_loss / place_take_profit have already re-established
+        the in-memory ProtectionState.  Overwrites any newly-placed order ID so that
+        the stored (pre-restart) IDs are used for cancellation instead.
+        """
+        state = self._protection.get(symbol)
+        if state is None:
+            return
+        if stop_order_id:
+            state.stop_order_id = stop_order_id
+        if tp_order_id:
+            state.tp_order_id = tp_order_id
 
     @staticmethod
     def _estimate_spread_pct(best_bid: float, best_ask: float) -> float:

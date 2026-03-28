@@ -1,0 +1,17 @@
+.env
+.env.*
+*.pyc
+__pycache__/
+.git/
+.gitignore
+state.db
+logs/
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+docs/
+scripts/run_paper.ps1
+scripts/run_prod.ps1

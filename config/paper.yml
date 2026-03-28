@@ -1,8 +1,6 @@
 app:
   mode: paper
-  dry_run: true
-  max_drawdown_pct: 0.12
+  max_daily_loss: 0.12
 
 persistence:
-  # Use a separate database for paper trading (e.g., trading_paper)
   postgres_dsn: "postgresql://postgres:admin1234@localhost:5432/trading_paper"

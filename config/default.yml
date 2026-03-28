@@ -7,8 +7,6 @@ app:
   trade_frequency_s: 5
 
 delta:
-  api_url: "https://cdn-ind.testnet.deltaex.org"
-  ws_url: "wss://testnet-socket.india.delta.exchange"
   enable_risk: true
 
 persistence:

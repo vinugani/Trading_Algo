@@ -1,13 +1,24 @@
 from pathlib import Path
-from typing import Any 
+from typing import Any
 
 import os
 import yaml
+import structlog
 from pydantic import AliasChoices
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
-from pydantic_settings import PydanticBaseSettingsSource
+
+
+# ── URL constants — single source of truth ────────────────────────────────────
+_PROD_API_URL = "https://api.india.delta.exchange"
+_PROD_WS_URL  = "wss://socket.india.delta.exchange"
+_TEST_API_URL = "https://cdn-ind.testnet.deltaex.org"
+_TEST_WS_URL  = "wss://socket-ind.testnet.deltaex.org"
+
+# Hostnames used for cross-environment mismatch detection
+_LIVE_HOSTNAMES = frozenset({"api.india.delta.exchange"})
+_TEST_HOSTNAMES = frozenset({"cdn-ind.testnet.deltaex.org", "testnet.deltaex.org"})
 
 
 def _load_yaml_config(mode: str) -> dict[str, Any]:
@@ -50,23 +61,43 @@ class Settings(BaseSettings):
         "momentum",
         description="portfolio or momentum or rsi_scalping or ema_crossover or trend_following or mean_reversion",
     )
-    exchange_env: str = Field("prod-india", description="testnet-india or prod-india")
+
+    # ── Exchange environment — the ONLY source of truth for API endpoints ──────
+    # Defaults to testnet-india. Must be explicitly changed to prod-india for live.
+    exchange_env: str = Field(
+        "testnet-india",
+        description="'testnet-india' (safe default) or 'prod-india' (real money). "
+                    "Drives api_url and ws_url — do not mix with manual URL fields.",
+    )
+
+    # ── Live trading safety gate ───────────────────────────────────────────────
+    # Both exchange_env=prod-india AND allow_live_trading=True are required to
+    # send real orders. Either condition alone is not sufficient.
+    allow_live_trading: bool = Field(
+        False,
+        description="Must be explicitly True to permit prod-india real-money trading. "
+                    "Default False ensures testnet-safe operation.",
+    )
+
+    # ── URLs — set automatically from exchange_env, never set manually ─────────
+    # Empty defaults are overwritten during __init__. Do not override via env/YAML.
+    api_url: str = Field("", description="Auto-set from exchange_env. Do not override.")
+    ws_url: str = Field("", description="Auto-set from exchange_env. Do not override.")
+
+    # Optional override for local/mock server testing only.
+    # When set, URL cross-checking is skipped and this value is used as api_url.
+    base_url: str | None = Field(
+        None,
+        description="Local/mock server override. Skips environment URL validation.",
+        validation_alias=AliasChoices("base_url", "DELTA_BASE_URL", "BASE_URL"),
+    )
+
     base_currency: str = "USDT"
     trade_symbols: list[str] = Field(default_factory=lambda: ["SOLUSD", "BTCUSD", "ETHUSD"])
     order_size: float = 100.0
     max_positions: int = 5
-    trade_frequency_s: int = 60
-    #Live URLS
-    #api_url: str = Field("https://api.india.delta.exchange", description="API base URL")
-    #ws_url: str = Field("wss://socket.india.delta.exchange", description="WebSocket base URL")
-    #TestNetUrls
-    api_url: str = Field("https://cdn-ind.testnet.deltaex.org", description="API base URL")
-    ws_url: str = Field("wss://socket-ind.testnet.deltaex.org", description="WebSocket base URL")
-    base_url: str | None = Field(
-        None,
-        description="Optional API base URL override (DELTA_BASE_URL)",
-        validation_alias=AliasChoices("base_url", "DELTA_BASE_URL", "BASE_URL"),
-    )
+    trade_frequency_s: int = 5
+
     api_key: str = ""
     api_secret: str = ""
     enable_risk: bool = True
@@ -137,21 +168,80 @@ class Settings(BaseSettings):
         # Determine mode from kwargs or environment
         mode = data.get("mode") or os.getenv("DELTA_MODE") or os.getenv("mode") or "paper"
         yaml_config = _load_yaml_config(mode)
-        
-        # Merge YAML config if not already in data (kwargs have priority)
+
+        # Merge YAML config; kwargs and env vars have priority
         for key, value in yaml_config.items():
             if key not in data:
                 data[key] = value
-                
-        super().__init__(**data)
-        if self.exchange_env == "prod-india":
-            self.api_url = "https://api.india.delta.exchange"
-            self.ws_url = "wss://socket.india.delta.exchange"
-        elif self.exchange_env == "testnet-india":
-            self.api_url = "https://cdn-ind.testnet.deltaex.org"
-            self.ws_url = "wss://socket-ind.testnet.deltaex.org"
-        else:
-            raise ValueError(f"Unsupported exchange_env={self.exchange_env}")
 
-        if self.base_url:
-            self.api_url = self.base_url.rstrip("/")
+        super().__init__(**data)
+        self._configure_and_validate()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Private helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _configure_and_validate(self) -> None:
+        """Set URLs from exchange_env and enforce all safety invariants.
+
+        Execution order:
+          1. Assign api_url / ws_url from exchange_env (sole source of truth).
+          2. Apply base_url override when provided (local/mock testing only).
+          3. Cross-validate URLs against exchange_env (skipped with base_url).
+          4. Block startup if prod-india is active but allow_live_trading is False.
+          5. Emit structured startup audit log.
+        """
+        # ── Step 1: Assign URLs from exchange_env ─────────────────────────────
+        if self.exchange_env == "prod-india":
+            self.api_url = _PROD_API_URL
+            self.ws_url  = _PROD_WS_URL
+        elif self.exchange_env == "testnet-india":
+            self.api_url = _TEST_API_URL
+            self.ws_url  = _TEST_WS_URL
+        else:
+            raise ValueError(
+                f"Invalid exchange_env={self.exchange_env!r}. "
+                "Accepted values: 'testnet-india' or 'prod-india'."
+            )
+
+        # ── Step 2: Apply base_url override (local/mock only) ─────────────────
+        using_base_url_override = bool(self.base_url)
+        if using_base_url_override:
+            self.api_url = self.base_url.rstrip("/")  # type: ignore[union-attr]
+
+        # ── Step 3: Cross-validate URL vs exchange_env ────────────────────────
+        if not using_base_url_override:
+            if self.exchange_env == "testnet-india":
+                if any(h in self.api_url for h in _LIVE_HOSTNAMES):
+                    raise ValueError(
+                        f"Configuration mismatch: exchange_env='testnet-india' but "
+                        f"api_url resolves to a LIVE endpoint ({self.api_url}). "
+                        "Correct exchange_env or remove the conflicting override."
+                    )
+            elif self.exchange_env == "prod-india":
+                if any(h in self.api_url for h in _TEST_HOSTNAMES):
+                    raise ValueError(
+                        f"Configuration mismatch: exchange_env='prod-india' but "
+                        f"api_url resolves to a TESTNET endpoint ({self.api_url}). "
+                        "Correct exchange_env or remove the conflicting override."
+                    )
+
+        # ── Step 4: Live trading safety gate ──────────────────────────────────
+        if self.exchange_env == "prod-india" and not self.allow_live_trading:
+            raise RuntimeError(
+                "LIVE TRADING BLOCKED: exchange_env='prod-india' requires "
+                "allow_live_trading=True. "
+                "Add DELTA_ALLOW_LIVE_TRADING=true to your .env only when you "
+                "intend to trade with real money on the live exchange."
+            )
+
+        # ── Step 5: Startup audit log ─────────────────────────────────────────
+        log = structlog.get_logger(__name__)
+        log.info(
+            "settings.configured",
+            exchange_env=self.exchange_env,
+            mode=self.mode,
+            api_url=self.api_url,
+            live_trading_active=(self.exchange_env == "prod-india"),
+            base_url_override=self.base_url or "none",
+        )

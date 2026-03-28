@@ -152,14 +152,21 @@ class ProfessionalTradingBot:
             symbol = self._normalize_symbol(pos.get("symbol"))
             if not symbol:
                 continue
+            trade_id = pos.get("trade_id")
+            # Restore the original entry timestamp so max_holding_time_s
+            # is measured from actual entry, not from bot restart time.
+            entry_ts = self.db.get_trade_entry_time(trade_id) if trade_id else None
             restored[symbol] = {
                 "symbol": symbol,
-                "trade_id": pos.get("trade_id"),
+                "trade_id": trade_id,
                 "side": pos.get("side"),
                 "size": float(pos.get("size", 0.0) or 0.0),
                 "entry_price": float(pos.get("avg_entry_price", 0.0) or 0.0),
                 "stop_loss": pos.get("stop_loss"),
                 "take_profit": pos.get("take_profit"),
+                "stop_order_id": pos.get("stop_order_id"),
+                "tp_order_id": pos.get("tp_order_id"),
+                "entry_ts": entry_ts,
                 "source": "db_restore",
             }
         self._local_cache_positions = dict(restored)
@@ -539,6 +546,18 @@ class ProfessionalTradingBot:
                 size=size,
                 target_price=float(take_profit),
                 trade_id=trade_id,
+            )
+        # After (re-)placing protection orders, restore any exchange order IDs
+        # that were persisted before a restart.  This prevents duplicate orders:
+        # the newly placed orders' IDs are overwritten with the stored IDs so
+        # that only the original exchange orders are tracked for cancellation.
+        stored_stop_id = position.get("stop_order_id")
+        stored_tp_id = position.get("tp_order_id")
+        if stored_stop_id or stored_tp_id:
+            self.execution_engine.restore_protection_order_ids(
+                symbol=symbol,
+                stop_order_id=stored_stop_id,
+                tp_order_id=stored_tp_id,
             )
         trailing = position.get("trailing_stop_pct")
         if trailing is not None and entry_price > 0:
@@ -1434,6 +1453,22 @@ class ProfessionalTradingBot:
                 entry_price=signal.price,
                 trade_id=trade_id,
             )
+        # Persist exchange order IDs so they survive a restart
+        stop_oid, tp_oid = self.execution_engine.get_protection_order_ids(symbol)
+        if stop_oid or tp_oid:
+            self.db.upsert_open_position_state(
+                symbol=symbol,
+                trade_id=trade_id,
+                side=position_side,
+                size=size,
+                entry_price=signal.price,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                trailing_stop_pct=signal.trailing_stop_pct,
+                stop_order_id=stop_oid,
+                tp_order_id=tp_oid,
+                mode=self.settings.mode,
+            )
         self._recalculate_open_notional()
 
     def _execute_live_entry(self, signal: Signal, size: float, trade_id: str) -> tuple[dict, bool, str]:
@@ -1729,14 +1764,35 @@ class ProfessionalTradingBot:
         entry_fee = self.fee_manager.calculate_entry_fee(entry_price, realized_size, entry_order_type)
         exit_fee = self.fee_manager.calculate_exit_fee(exit_price, realized_size, exit_order_type)
         total_fee = entry_fee + exit_fee
-        real_pnl = gross_pnl - total_fee
+
+        # Funding cost — only meaningful for live perpetuals
+        funding_cost = 0.0
+        if self.settings.enable_funding_awareness and self.client is not None:
+            entry_ts = open_pos.get("entry_ts")
+            holding_s = (time.time() - entry_ts) if entry_ts else 0.0
+            if holding_s > 0:
+                funding_rate = self.client.get_funding_rate(symbol)
+                if funding_rate is not None:
+                    notional = exit_price * realized_size
+                    funding_cost = self.fee_manager.calculate_funding_cost(
+                        notional, funding_rate, holding_s
+                    )
+                    if funding_cost > 0:
+                        logger.info(
+                            "Funding cost symbol=%s funding_rate=%.6f holding_s=%.0f funding_cost=%.4f",
+                            symbol, funding_rate, holding_s, funding_cost,
+                        )
+
+        real_pnl = gross_pnl - total_fee - funding_cost
         logger.info(
-            "Fee calculation symbol=%s trade_id=%s entry_fee=%s exit_fee=%s total_fee=%s gross_pnl=%s real_pnl=%s",
+            "Fee calculation symbol=%s trade_id=%s entry_fee=%s exit_fee=%s "
+            "total_fee=%s funding_cost=%s gross_pnl=%s real_pnl=%s",
             symbol,
             trade_id,
             entry_fee,
             exit_fee,
             total_fee,
+            funding_cost,
             gross_pnl,
             real_pnl,
         )
@@ -2085,7 +2141,9 @@ class ProfessionalTradingBot:
                 self._kill_switch_triggered = True
             await asyncio.sleep(3)
 
-    async def run_async(self, max_cycles: Optional[int] = None, sleep_interval_s: int = 60) -> None:
+    async def run_async(self, max_cycles: Optional[int] = None, sleep_interval_s: Optional[int] = None) -> None:
+        # sleep_interval_s CLI override takes priority; fall back to settings
+        effective_interval = int(sleep_interval_s) if sleep_interval_s is not None else self.settings.trade_frequency_s
         if not self.settings.disable_metrics_server:
             self.metrics.start_server(port=self.settings.metrics_port, addr=self.settings.metrics_addr)
         if self.market_data_service is not None:
@@ -2121,7 +2179,7 @@ class ProfessionalTradingBot:
                 self._save_performance_metrics()
                 cycle += 1
                 elapsed = time.perf_counter() - started
-                delay = max(0.0, float(sleep_interval_s) - elapsed)
+                delay = max(0.0, float(effective_interval) - elapsed)
                 if delay > 0:
                     await asyncio.sleep(delay)
         finally:
@@ -2130,7 +2188,7 @@ class ProfessionalTradingBot:
                 self.market_data_service.stop()
             self._clear_shutdown_signal()
 
-    def run(self, max_cycles: Optional[int] = None, sleep_interval_s: int = 60) -> None:
+    def run(self, max_cycles: Optional[int] = None, sleep_interval_s: Optional[int] = None) -> None:
         asyncio.run(self.run_async(max_cycles=max_cycles, sleep_interval_s=sleep_interval_s))
 
 
@@ -2143,7 +2201,7 @@ def main() -> None:
         default="portfolio",
     )
     parser.add_argument("--cycles", type=int, default=None, help="Optional number of loop cycles")
-    parser.add_argument("--sleep-interval", type=int, default=60, help="Loop sleep interval in seconds")
+    parser.add_argument("--sleep-interval", type=int, default=None, help="Loop sleep interval in seconds (default: trade_frequency_s from settings)")
     parser.add_argument(
         "--symbols",
         default=None,

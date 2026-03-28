@@ -214,10 +214,20 @@ class DeltaClient:
             return str(max(1, int(round(size_f))))
         return str(size_f)
 
-    def get_funding_rate(self, symbol: str) -> Dict[str, Any]:
-        """Fetch current funding rate for a symbol."""
-        # Delta v2 endpoint for funding rates
-        return self._request("GET", f"/v2/products/{symbol}/ticker", auth=False)
+    def get_funding_rate(self, symbol: str) -> float | None:
+        """Fetch current funding rate for a perpetual symbol.
+
+        Returns the rate as a decimal fraction (e.g. 0.0001 = 0.01%) or None
+        if unavailable.  Delta Exchange exposes funding_rate inside the ticker
+        payload, so we reuse the existing /v2/tickers endpoint.
+        """
+        try:
+            resp = self.get_ticker(symbol)
+            result = resp.get("result", {})
+            raw = result.get("funding_rate")
+            return float(raw) if raw is not None else None
+        except Exception:
+            return None
 
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         return self._request("GET", f"/v2/tickers/{symbol}", auth=False)
