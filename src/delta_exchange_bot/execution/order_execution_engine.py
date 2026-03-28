@@ -142,29 +142,13 @@ class OrderExecutionEngine:
     ) -> ProtectionState:
         state = self._ensure_state(symbol, position_side, size, reference_price=stop_price, trade_id=trade_id)
         state.stop_loss = stop_price
-        
-        if self.client:
-            # Place native stop market order on exchange
-            exit_side = "sell" if position_side.lower() == "long" else "buy"
-            client_order_id = self._safe_client_order_id(f"{trade_id or symbol}-sl")
-            try:
-                resp = self.client.place_order(
-                    symbol=symbol,
-                    side=exit_side,
-                    size=size,
-                    stop_price=stop_price,
-                    order_type="stop_market_order",
-                    reduce_only=True,
-                    client_order_id=client_order_id,
-                )
-                # Store exchange order ID so we can cancel it on position close
-                state.stop_order_id = self._extract_exchange_order_id(resp)
-                logger.info(
-                    "Placed native stop-loss order: symbol=%s stop=%s exchange_order_id=%s",
-                    symbol, stop_price, state.stop_order_id,
-                )
-            except Exception as e:
-                logger.error("Failed to place native stop-loss: %s. Falling back to in-memory protection.", e)
+
+        # NOTE: Native exchange stop orders (stop_market_order / take_profit_market_order)
+        # are rejected by the Delta Exchange API with HTTP 400 — the /v2/orders endpoint
+        # only accepts limit_order and market_order; conditional orders require a separate
+        # bracket/conditional order endpoint not yet integrated.
+        # Protection is tracked in-memory and triggered by on_price_update() each cycle.
+        # TODO Phase 3: integrate /v2/orders/bracket for native exchange-side SL/TP.
 
         logger.info("Registered stop loss: symbol=%s side=%s stop=%s size=%s", symbol, state.side, stop_price, size)
         return state
@@ -180,28 +164,8 @@ class OrderExecutionEngine:
         state = self._ensure_state(symbol, position_side, size, reference_price=target_price, trade_id=trade_id)
         state.take_profit = target_price
 
-        if self.client:
-            # Place native take profit market order on exchange
-            exit_side = "sell" if position_side.lower() == "long" else "buy"
-            client_order_id = self._safe_client_order_id(f"{trade_id or symbol}-tp")
-            try:
-                resp = self.client.place_order(
-                    symbol=symbol,
-                    side=exit_side,
-                    size=size,
-                    stop_price=target_price,
-                    order_type="take_profit_market_order",
-                    reduce_only=True,
-                    client_order_id=client_order_id,
-                )
-                # Store exchange order ID so we can cancel it on position close
-                state.tp_order_id = self._extract_exchange_order_id(resp)
-                logger.info(
-                    "Placed native take-profit order: symbol=%s target=%s exchange_order_id=%s",
-                    symbol, target_price, state.tp_order_id,
-                )
-            except Exception as e:
-                logger.error("Failed to place native take-profit: %s. Falling back to in-memory protection.", e)
+        # NOTE: Same as place_stop_loss — native take-profit orders are in-memory only.
+        # TODO Phase 3: integrate /v2/orders/bracket for native exchange-side SL/TP.
 
         logger.info("Registered take profit: symbol=%s side=%s target=%s size=%s", symbol, state.side, target_price, size)
         return state

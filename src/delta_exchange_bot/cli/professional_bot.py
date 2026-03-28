@@ -937,7 +937,12 @@ class ProfessionalTradingBot:
     def _on_realtime_price(self, symbol: str, price: float) -> None:
         self._latest_price_cache[symbol] = float(price)
         if self.settings.mode == "live" and symbol in self._local_cache_positions:
-            self._sync_position_if_due(symbol, reason="realtime_price", min_interval_s=2.0)
+            # FIX: Use 15s min_interval to match the pre_symbol_cycle window.
+            # The 2s window was too short — reconciliation stamps the sync time,
+            # but the WebSocket callback fires ~2s later, passes the check, hits
+            # the exchange (testnet still shows flat due to propagation lag) and
+            # flattens the just-confirmed position, causing the re-ordering loop.
+            self._sync_position_if_due(symbol, reason="realtime_price", min_interval_s=15.0)
             self.validate_position_consistency(symbol)
         triggered = self.execution_engine.on_price_update(symbol, float(price))
         if triggered:
