@@ -484,6 +484,35 @@ class ProfessionalTradingBot:
             if trailing_stop_pct is None:
                 trailing_stop_pct = protection_signal.trailing_stop_pct
 
+        # FIX: When a position is discovered via exchange-sync (e.g. after a
+        # testnet lag caused the post-entry confirmation to fail) and the
+        # previous local state had no SL/TP recorded, apply default percentage-
+        # based protections so the position is never left unprotected.
+        if stop_loss is None and entry_price > 0:
+            stop_loss = round(
+                entry_price * (1 - self.DEFAULT_STOP_LOSS_PCT)
+                if side == "long"
+                else entry_price * (1 + self.DEFAULT_STOP_LOSS_PCT),
+                8,
+            )
+            logger.warning(
+                "Applied default stop_loss for exchange-synced position symbol=%s side=%s entry=%s sl=%s",
+                symbol_u, side, entry_price, stop_loss,
+            )
+        if take_profit is None and entry_price > 0:
+            take_profit = round(
+                entry_price * (1 + self.DEFAULT_TAKE_PROFIT_PCT)
+                if side == "long"
+                else entry_price * (1 - self.DEFAULT_TAKE_PROFIT_PCT),
+                8,
+            )
+            logger.warning(
+                "Applied default take_profit for exchange-synced position symbol=%s side=%s entry=%s tp=%s",
+                symbol_u, side, entry_price, take_profit,
+            )
+        if trailing_stop_pct is None:
+            trailing_stop_pct = self.DEFAULT_TRAILING_STOP_PCT
+
         trade_id = (
             preferred_trade_id
             or str(previous.get("trade_id") or "")
@@ -654,6 +683,14 @@ class ProfessionalTradingBot:
                 return False
 
         logger.info("Position reconciliation completed reason=%s", reason)
+        # FIX: Mark all reconciled symbols as freshly synced so that the
+        # per-symbol pre_symbol_cycle call (which uses a separate API endpoint
+        # and may return stale/different data on testnet) is suppressed for
+        # min_interval_s seconds.  This prevents reconciliation results from
+        # being immediately overwritten by a stale per-symbol snapshot.
+        now = time.monotonic()
+        for symbol in tracked_symbols:
+            self._last_position_sync_monotonic[self._normalize_symbol(symbol)] = now
         return True
 
     def _sync_position_if_due(self, symbol: str, reason: str, min_interval_s: float = 2.0) -> bool:
@@ -739,6 +776,13 @@ class ProfessionalTradingBot:
         if self.settings.mode != "live":
             return True
 
+        # FIX: Save local position state before polling the exchange.
+        # Testnet has 3-10s propagation lag — repeated sync calls in the retry
+        # loop would otherwise flatten the just-registered position (because
+        # exchange still returns size=0), wiping out the SL/TP values that
+        # _register_entry_position already stored in the local cache.
+        _saved_local = dict(self._local_cache_positions.get(symbol_u) or {})
+
         retries = max(1, int(self.settings.position_sync_retries))
         delay_s = max(0.1, float(self.settings.position_sync_retry_delay_s))
         for attempt in range(1, retries + 1):
@@ -763,6 +807,21 @@ class ProfessionalTradingBot:
             # Delta India).  Log it as critical but do NOT hard-halt — the order
             # was accepted by the exchange (is_filled=True) so halting here would
             # leave an orphaned live position with no local tracking.
+            #
+            # FIX: Restore the pre-validation local state so the position and its
+            # SL/TP protections are NOT lost just because the exchange hasn't
+            # settled yet.  The next cycle's reconciliation will overwrite this
+            # with the authoritative exchange state once it propagates.
+            if _saved_local:
+                self._local_cache_positions[symbol_u] = _saved_local
+                self._refresh_protection_for_symbol(symbol_u)
+                logger.warning(
+                    "POST_EXECUTION_POSITION_NOT_CONFIRMED — restored pre-validation "
+                    "local state symbol=%s side=%s retries=%s",
+                    symbol_u,
+                    side,
+                    retries,
+                )
             logger.critical(
                 "POST_EXECUTION_POSITION_NOT_CONFIRMED symbol=%s side=%s "
                 "before=%s after=%s retries=%s — order was accepted; continuing "
@@ -1953,7 +2012,13 @@ class ProfessionalTradingBot:
             return
 
         if self.settings.mode == "live":
-            if not self.sync_position_with_exchange(symbol, reason="pre_symbol_cycle"):
+            # FIX: Use _sync_position_if_due instead of a bare sync call.
+            # If reconciliation ran within the last 10 s, the per-symbol call
+            # is skipped — this prevents testnet propagation lag from causing
+            # a freshly-reconciled position to be immediately flattened by a
+            # stale per-symbol snapshot, which was the root cause of the
+            # repeated re-ordering loop and daily kill-switch triggering.
+            if not self._sync_position_if_due(symbol, reason="pre_symbol_cycle", min_interval_s=10.0):
                 self.halt_trading(f"pre_cycle_sync_failed:{symbol}")
                 self._log_no_trade_reason(symbol, "pre_cycle_sync_failed")
                 return
