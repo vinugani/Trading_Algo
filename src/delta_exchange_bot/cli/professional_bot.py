@@ -342,23 +342,49 @@ class ProfessionalTradingBot:
             "fetched_at": time.time(),
         }
 
+    @staticmethod
+    def _extract_underlying_asset_symbol(symbol: str) -> str:
+        """Return the base asset from a trade symbol. BTCUSD → BTC, ETHUSD → ETH.
+
+        The testnet /v2/positions endpoint requires either product_id or
+        underlying_asset_symbol — it rejects calls with no parameters.
+        This helper extracts the base so we can query per-underlying.
+        """
+        symbol_u = symbol.upper()
+        for quote in ("USDT", "USD", "BTC", "ETH", "USDC"):
+            if symbol_u.endswith(quote):
+                return symbol_u[: -len(quote)]
+        return symbol_u
+
     def _fetch_all_exchange_position_snapshots(self) -> Optional[dict[str, dict]]:
         if self.settings.mode != "live":
             return {}
-        start = time.perf_counter()
-        try:
-            payload = self.client.get_positions()
-            self.safety.breaker.record_success()
-        except Exception:
-            self.safety.breaker.record_failure()
-            self.metrics.record_api_error("/v2/positions")
-            return None
-        finally:
-            self.metrics.observe_api_latency("/v2/positions", time.perf_counter() - start)
 
-        rows = self._extract_rows(payload)
+        # The testnet /v2/positions endpoint requires underlying_asset_symbol or
+        # product_id — a bare call (no params) returns HTTP 400 on testnet.
+        # Query per unique underlying asset and merge, which works on both
+        # testnet and live exchange.
+        underlyings = {
+            self._extract_underlying_asset_symbol(s)
+            for s in self.settings.trade_symbols
+        }
+
+        all_rows: list[dict] = []
+        for underlying in sorted(underlyings):
+            start = time.perf_counter()
+            try:
+                payload = self.client.get_positions(underlying_asset_symbol=underlying)
+                self.safety.breaker.record_success()
+            except Exception:
+                self.safety.breaker.record_failure()
+                self.metrics.record_api_error("/v2/positions")
+                return None
+            finally:
+                self.metrics.observe_api_latency("/v2/positions", time.perf_counter() - start)
+            all_rows.extend(self._extract_rows(payload))
+
         grouped_rows: dict[str, list[dict]] = defaultdict(list)
-        for row in rows:
+        for row in all_rows:
             symbol = self._extract_symbol_from_position_row(row)
             if not symbol:
                 continue

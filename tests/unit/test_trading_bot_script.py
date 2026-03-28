@@ -98,6 +98,10 @@ def _candles() -> pd.DataFrame:
 
 
 def test_process_symbol_live_runs_full_flow(monkeypatch):
+    # Patch before construction so __init__ never touches the real DB
+    monkeypatch.setattr(MainTradingBot, "_load_open_positions_from_db", lambda self: None)
+    monkeypatch.setattr(MainTradingBot, "_update_drawdown_metric", lambda self: None)
+    monkeypatch.setattr(MainTradingBot, "_update_total_pnl_metric", lambda self: None)
     settings = Settings(mode="live", strategy_name="rsi_scalping", trade_symbols=["BTCUSD"], api_key="k", api_secret="s")
     bot = MainTradingBot(settings)
     bot.execution_engine = FakeExecutionEngine()
@@ -132,6 +136,10 @@ def test_process_symbol_live_runs_full_flow(monkeypatch):
 
 
 def test_process_symbol_handles_protection_trigger(monkeypatch):
+    # Patch before construction so __init__ never touches the real DB
+    monkeypatch.setattr(MainTradingBot, "_load_open_positions_from_db", lambda self: None)
+    monkeypatch.setattr(MainTradingBot, "_update_drawdown_metric", lambda self: None)
+    monkeypatch.setattr(MainTradingBot, "_update_total_pnl_metric", lambda self: None)
     settings = Settings(mode="live", strategy_name="rsi_scalping", trade_symbols=["BTCUSD"], api_key="k", api_secret="s")
     bot = MainTradingBot(settings)
     bot.execution_engine = FakeExecutionEngine()

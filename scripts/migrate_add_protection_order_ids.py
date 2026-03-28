@@ -63,6 +63,17 @@ def run_migration(dsn: str) -> None:
     print("\nMigration complete.")
 
 
+def _postgres_reachable(dsn: str) -> bool:
+    try:
+        engine = sa.create_engine(dsn, connect_args={"connect_timeout": 3})
+        with engine.connect():
+            pass
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     settings = Settings()
     dsn = settings.postgres_dsn
@@ -79,14 +90,3 @@ if __name__ == "__main__":
 
     print(f"Running migration on: {dsn.split('@')[-1] if '@' in dsn else dsn}")
     run_migration(dsn)
-
-
-def _postgres_reachable(dsn: str) -> bool:
-    try:
-        engine = sa.create_engine(dsn, connect_args={"connect_timeout": 3})
-        with engine.connect():
-            pass
-        engine.dispose()
-        return True
-    except Exception:
-        return False
