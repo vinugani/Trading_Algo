@@ -164,6 +164,18 @@ class Settings(BaseSettings):
     redis_url: str = Field("redis://redis:6379/0")
     postgres_dsn: str = Field("postgresql://postgres:postgres@postgres:5432/trading")
 
+    # ── Logging ───────────────────────────────────────────────────────────────
+    log_dir: str = Field(
+        "logs",
+        description="Directory to write bot log files. Set to '' to disable file logging.",
+        validation_alias=AliasChoices("log_dir", "LOG_DIR", "DELTA_LOG_DIR"),
+    )
+    log_level: str = Field(
+        "INFO",
+        description="Minimum log level: DEBUG, INFO, WARNING, ERROR.",
+        validation_alias=AliasChoices("log_level", "LOG_LEVEL", "DELTA_LOG_LEVEL"),
+    )
+
     def __init__(self, **data):
         # Determine mode from kwargs or environment
         mode = data.get("mode") or os.getenv("DELTA_MODE") or os.getenv("mode") or "paper"

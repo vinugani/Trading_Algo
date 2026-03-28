@@ -2301,9 +2301,19 @@ def main() -> None:
     parser.add_argument("--metrics-port", type=int, default=8000)
     parser.add_argument("--metrics-addr", default="0.0.0.0")
     parser.add_argument("--disable-metrics-server", action="store_true")
+    parser.add_argument(
+        "--log-dir",
+        default=None,
+        help="Directory to write log files (default: 'logs/'). Pass '' to disable file logging.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Minimum log level (default: INFO from settings).",
+    )
     args = parser.parse_args()
 
-    configure_logging(level="INFO", structured=True)
     kwargs = {
         "mode": args.mode,
         "metrics_port": args.metrics_port,
@@ -2313,7 +2323,22 @@ def main() -> None:
     kwargs["strategy_name"] = args.strategy
     if args.symbols:
         kwargs["trade_symbols"] = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    if args.log_dir is not None:
+        kwargs["log_dir"] = args.log_dir
+    if args.log_level is not None:
+        kwargs["log_level"] = args.log_level
     settings = Settings(**kwargs)
+
+    # Wire file logging — creates logs/bot_YYYYMMDD_HHMMSS.log automatically
+    log_dir_value = settings.log_dir if settings.log_dir else None
+    session_log = configure_logging(
+        level=settings.log_level,
+        structured=True,
+        log_dir=log_dir_value,
+    )
+    if session_log:
+        logger.info("Session log: %s", session_log)
+
     bot = ProfessionalTradingBot(settings=settings)
     bot.run(max_cycles=args.cycles, sleep_interval_s=args.sleep_interval)
 

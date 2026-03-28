@@ -89,3 +89,15 @@ server 169.254.169.123 prefer iburst
 
 systemctl restart chronyd
 chronyc tracking
+
++++++++++++++++++++++++++
+Logs
++++++++++++++++++++++++++
+# Change log level to DEBUG
+python scripts/run_bot.py --mode live --strategy portfolio --log-level DEBUG
+
+# Custom log directory
+python scripts/run_bot.py --mode live --strategy portfolio --log-dir /tmp/bot_logs
+
+# Disable file logging (console only)
+python scripts/run_bot.py --mode live --strategy portfolio --log-dir ""

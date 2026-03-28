@@ -8,6 +8,7 @@ import pandas as pd
 
 from delta_exchange_bot.api.delta_client import DeltaClient
 from delta_exchange_bot.core.settings import Settings
+from delta_exchange_bot.utils.logging import configure_logging
 from delta_exchange_bot.data.market_data import fetch_candles
 from delta_exchange_bot.execution.order_execution_engine import OrderExecutionEngine
 from delta_exchange_bot.monitoring.prometheus_exporter import PrometheusMetricsExporter
@@ -636,7 +637,6 @@ class MainTradingBot:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
     parser = argparse.ArgumentParser(description="Main Delta Exchange trading bot")
     parser.add_argument("--mode", choices=["paper", "live"], default="paper")
     parser.add_argument("--strategy", choices=["momentum", "rsi_scalping", "ema_crossover"], default=None)
@@ -645,12 +645,33 @@ def main() -> None:
     parser.add_argument("--metrics-port", type=int, default=8000, help="Prometheus metrics port")
     parser.add_argument("--metrics-addr", default="0.0.0.0", help="Prometheus bind address")
     parser.add_argument("--disable-metrics-server", action="store_true", help="Disable metrics HTTP exporter")
+    parser.add_argument(
+        "--log-dir",
+        default=None,
+        help="Directory to write log files (default: 'logs/'). Pass '' to disable file logging.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Minimum log level (default: INFO).",
+    )
     args = parser.parse_args()
 
-    kwargs = {"mode": args.mode}
+    kwargs: dict = {"mode": args.mode}
     if args.strategy:
         kwargs["strategy_name"] = args.strategy
+    if args.log_dir is not None:
+        kwargs["log_dir"] = args.log_dir
+    if args.log_level is not None:
+        kwargs["log_level"] = args.log_level
     settings = Settings(**kwargs)
+
+    log_dir_value = settings.log_dir if settings.log_dir else None
+    session_log = configure_logging(level=settings.log_level, structured=False, log_dir=log_dir_value)
+    if session_log:
+        logger.info("Session log: %s", session_log)
+
     bot = MainTradingBot(settings)
     if not args.disable_metrics_server:
         bot.metrics.start_server(port=args.metrics_port, addr=args.metrics_addr)
