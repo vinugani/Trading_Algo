@@ -35,6 +35,59 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error creating database tables: {e}")
             raise
+        self._apply_schema_migrations()
+
+    # ------------------------------------------------------------------
+    # Schema migrations — ADD COLUMN IF NOT EXISTS is idempotent so this
+    # is safe to run on every startup against both fresh and old databases.
+    # Add a new entry here whenever a column is added to an existing model.
+    # ------------------------------------------------------------------
+    _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
+        # (table, column, pg_type)
+        ("positions", "stop_order_id", "VARCHAR(64)"),
+        ("positions", "tp_order_id",   "VARCHAR(64)"),
+    ]
+
+    def _apply_schema_migrations(self) -> None:
+        """Add any columns that exist in the ORM model but not yet in the DB.
+
+        Uses ``ALTER TABLE … ADD COLUMN IF NOT EXISTS`` (PostgreSQL ≥ 9.6)
+        which is a no-op when the column already exists.  For SQLite, which
+        lacks ``IF NOT EXISTS`` on ALTER TABLE, we catch the OperationalError
+        that fires when the column is already present.
+        """
+        is_sqlite = self.engine.dialect.name == "sqlite"
+        with self.engine.connect() as conn:
+            for table, column, pg_type in self._COLUMN_MIGRATIONS:
+                try:
+                    if is_sqlite:
+                        conn.execute(
+                            __import__("sqlalchemy").text(
+                                f"ALTER TABLE {table} ADD COLUMN {column} {pg_type}"
+                            )
+                        )
+                    else:
+                        conn.execute(
+                            __import__("sqlalchemy").text(
+                                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {pg_type}"
+                            )
+                        )
+                    conn.commit()
+                    logger.info("Schema migration applied: %s.%s (%s)", table, column, pg_type)
+                except Exception as exc:
+                    # SQLite raises OperationalError "duplicate column name" — ignore it.
+                    # Any other DB error is also swallowed with a warning so startup
+                    # is never blocked by a migration that already ran.
+                    conn.rollback()
+                    msg = str(exc).lower()
+                    if "duplicate column" in msg or "already exists" in msg:
+                        logger.debug(
+                            "Schema migration skipped (column exists): %s.%s", table, column
+                        )
+                    else:
+                        logger.warning(
+                            "Schema migration failed for %s.%s: %s", table, column, exc
+                        )
 
     def get_session(self) -> Session:
         return self.SessionLocal()
