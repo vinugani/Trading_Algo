@@ -229,7 +229,7 @@ class RSIScalpingStrategy(Strategy):
 
 class RSIScalpingCandleStrategy(CandleStrategy):
     name = "rsi_scalping"
-    allowed_regimes = {MarketRegime.RANGING, MarketRegime.LOW_VOLATILITY, MarketRegime.HIGH_VOLATILITY}
+    allowed_regimes = {MarketRegime.RANGING, MarketRegime.LOW_VOLATILITY, MarketRegime.HIGH_VOLATILITY, MarketRegime.TRENDING}
 
     def __init__(self):
         self._impl = RSIScalpingStrategy()

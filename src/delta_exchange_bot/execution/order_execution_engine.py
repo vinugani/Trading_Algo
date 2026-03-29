@@ -32,17 +32,17 @@ class ProtectionState:
 
 
 class OrderExecutionEngine:
-    # Seconds after registration during which a protection will NOT fire.
-    # Prevents the price that was already live when a position was registered
-    # from immediately triggering its own SL/TP.
-    PROTECTION_GRACE_PERIOD_S: float = 10.0
-
-    def __init__(self, client: Optional[DeltaClient]):
+    def __init__(self, client: Optional[DeltaClient], protection_grace_period_s: float = 10.0):
         self.client = client
         self._protection: dict[str, ProtectionState] = {}
         self.default_spread_threshold_pct = 0.0008
         self.default_slippage_threshold_pct = 0.002
         self.default_chunk_size = 0.0
+        # Seconds after registration during which a protection will NOT fire.
+        # Prevents the price that was already live when a position was registered
+        # from immediately triggering its own SL/TP.
+        # Pass protection_grace_period_s=0 in unit tests to keep immediate triggers.
+        self.PROTECTION_GRACE_PERIOD_S: float = protection_grace_period_s
 
     @staticmethod
     def _safe_client_order_id(raw: Optional[str], max_len: int = 32) -> Optional[str]:

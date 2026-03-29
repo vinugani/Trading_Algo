@@ -36,7 +36,7 @@ def test_execute_limit_order():
 
 def test_trailing_stop_long_triggers_exit_market_order():
     client = FakeDeltaClient()
-    engine = OrderExecutionEngine(client)
+    engine = OrderExecutionEngine(client, protection_grace_period_s=0)
 
     engine.place_stop_loss("BTCUSD", "long", size=1.0, stop_price=95.0, trade_id="trade-abc")
     engine.set_trailing_stop("BTCUSD", "long", size=1.0, trail_pct=0.01, entry_price=100.0, trade_id="trade-abc")
@@ -55,7 +55,7 @@ def test_trailing_stop_long_triggers_exit_market_order():
 
 def test_take_profit_short_triggers_exit_market_order():
     client = FakeDeltaClient()
-    engine = OrderExecutionEngine(client)
+    engine = OrderExecutionEngine(client, protection_grace_period_s=0)
 
     engine.place_take_profit("ETHUSD", "short", size=2.0, target_price=90.0)
     triggered = engine.on_price_update("ETHUSD", 89.0)
