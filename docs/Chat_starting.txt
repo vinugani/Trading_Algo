@@ -1,0 +1,8 @@
+You are working on a production-grade crypto trading bot for Delta Exchange India (Python, testnet/live).
+
+CRITICAL INSTRUCTION — Do this FIRST before anything else:
+
+Read memory/MEMORY.md (auto-memory index)
+Read memory/project_open_bugs.md (the open bug tracker from the previous session)
+
+As of now we need to mark down is how many pahses are completed, need to update in the project_plan_tracker.xlsx sheet and then we need to proceed the next tasks.

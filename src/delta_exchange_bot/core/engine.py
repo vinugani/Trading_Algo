@@ -15,7 +15,7 @@ from delta_exchange_bot.persistence.db import DatabaseManager
 from delta_exchange_bot.strategy.ema_crossover import EMACrossoverStrategy
 from delta_exchange_bot.strategy.momentum import MomentumStrategy
 from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy
-from delta_exchange_bot.strategy.portfolio import PortfolioStrategy
+from delta_exchange_bot.strategy.portfolio import PortfolioStrategy, CandlePortfolioEngineAdapter
 from delta_exchange_bot.strategy.base import Signal
 from delta_exchange_bot.core.settings import Settings
 from delta_exchange_bot.api.websocket_manager import WebSocketManager
@@ -58,9 +58,14 @@ class TradingEngine:
         )
         for symbol in settings.trade_symbols:
             self.ws_manager.add_subscription("v2/ticker", [symbol])
-        
-        # New OHLCV buffer: symbol -> list of dicts {o, h, l, c, v, t}
+            self.ws_manager.add_subscription("candlestick_1m", [symbol])
+
+        # Closed OHLCV candle buffer: symbol -> deque of closed 1m bars (dicts with open/high/low/close/volume/timestamp)
         self._ohlcv_history: dict[str, deque[dict]] = defaultdict(lambda: deque(maxlen=100))
+        # Currently forming (open) candle per symbol — NOT passed to strategies
+        self._candle_in_progress: dict[str, dict] = {}
+        # Tracks symbols whose history has been seeded via REST bootstrap
+        self._candle_bootstrap_done: set[str] = set()
             
         # Reconciliation Setup
         self.reconciliation_service = ReconciliationService(
@@ -82,6 +87,8 @@ class TradingEngine:
             return EMACrossoverStrategy()
         if normalized == "portfolio":
             return PortfolioStrategy()
+        if normalized == "candle_portfolio":
+            return CandlePortfolioEngineAdapter()
         raise ValueError(f"Unsupported strategy_name={strategy_name}")
 
     @staticmethod
@@ -132,6 +139,142 @@ class TradingEngine:
         else:
             log_fn("Market data alert: %s", message)
 
+    # ------------------------------------------------------------------
+    # Real candle pipeline
+    # ------------------------------------------------------------------
+
+    def _process_candle_message(self, symbol: str, payload: dict) -> None:
+        """Handle a candlestick_1m WebSocket message.
+
+        Delta Exchange streams candle *updates* for the currently forming bar.
+        A candle becomes CLOSED when a NEW candle (different timestamp) arrives.
+        Only closed candles are appended to _ohlcv_history for strategy use.
+
+        Fields accepted from payload (defensive — handles alternate naming):
+          candle_start_time | start_time | timestamp | time  → bar timestamp
+          open, high, low, close, volume                      → OHLCV values
+        """
+        # Resolve timestamp field defensively
+        ts = (
+            payload.get("candle_start_time")
+            or payload.get("start_time")
+            or payload.get("timestamp")
+            or payload.get("time")
+        )
+        try:
+            open_  = float(payload.get("open",   0) or 0)
+            high   = float(payload.get("high",   0) or 0)
+            low    = float(payload.get("low",    0) or 0)
+            close  = float(payload.get("close",  0) or 0)
+            volume = float(payload.get("volume", 0) or 0)
+        except (TypeError, ValueError):
+            logger.warning("candle.parse_failed symbol=%s payload=%s", symbol, payload)
+            return
+
+        if not (open_ > 0 and close > 0):
+            logger.debug("candle.skip_zero_price symbol=%s", symbol)
+            return
+
+        incoming = {
+            "open": open_, "high": high, "low": low,
+            "close": close, "volume": volume, "timestamp": ts,
+        }
+
+        existing = self._candle_in_progress.get(symbol)
+
+        if existing is None:
+            # First candle update received on this connection
+            self._candle_in_progress[symbol] = incoming
+            logger.debug("candle.first_received symbol=%s ts=%s", symbol, ts)
+            return
+
+        if ts != existing["timestamp"]:
+            # New candle started — the previous in-progress bar is now CLOSED
+            prev_ts = existing["timestamp"]
+            try:
+                gap_s = int(ts) - int(prev_ts)
+                if gap_s > 120:
+                    logger.warning(
+                        "candle.gap_detected symbol=%s gap_s=%d prev_ts=%s curr_ts=%s",
+                        symbol, gap_s, prev_ts, ts,
+                    )
+            except (TypeError, ValueError):
+                pass
+
+            self._ohlcv_history[symbol].append(existing)
+            logger.debug(
+                "candle.closed symbol=%s ts=%s o=%.4f h=%.4f l=%.4f c=%.4f v=%.4f",
+                symbol, prev_ts,
+                existing["open"], existing["high"], existing["low"],
+                existing["close"], existing["volume"],
+            )
+            self._candle_in_progress[symbol] = incoming
+        else:
+            # Same candle window — update H/L/C/V in-place
+            existing["high"]   = max(existing["high"], high)
+            existing["low"]    = min(existing["low"],  low)
+            existing["close"]  = close
+            existing["volume"] = volume
+
+    def _bootstrap_candle_history(self, symbol: str) -> None:
+        """Seed _ohlcv_history[symbol] from the REST candles endpoint.
+
+        Called once per symbol at startup (and on-demand if the buffer is empty).
+        Fetches the last ~100 closed 1-minute candles.  Skips the final REST
+        row because it may be the still-open current bar.
+
+        Falls back to a 7-day window if the normal 100-minute window returns
+        nothing (common on Delta India testnet which can lag 60+ hours).
+        """
+        if symbol in self._candle_bootstrap_done:
+            return
+
+        logger.info("candle.bootstrap_start symbol=%s source=REST/1m", symbol)
+        try:
+            end_ts   = int(time.time())
+            start_ts = end_ts - 100 * 60  # 100 minutes of 1m bars
+
+            resp = self.api.get_candles(symbol=symbol, resolution="1m", start=start_ts, end=end_ts)
+            rows = resp.get("result", []) if isinstance(resp, dict) else []
+
+            if not rows:
+                # Testnet may lag significantly — try a 7-day window
+                fallback_start = end_ts - 86400 * 7
+                resp = self.api.get_candles(symbol=symbol, resolution="1m", start=fallback_start, end=end_ts)
+                rows = resp.get("result", []) if isinstance(resp, dict) else []
+                if rows:
+                    logger.info("candle.bootstrap_testnet_fallback symbol=%s rows=%d", symbol, len(rows))
+
+            if not rows:
+                logger.warning("candle.bootstrap_no_data symbol=%s — candle strategies will wait for WS feed", symbol)
+                self._candle_bootstrap_done.add(symbol)
+                return
+
+            # Exclude the last row — it may be the still-open current bar
+            closed_rows = rows[:-1]
+            count = 0
+            for row in closed_rows:
+                try:
+                    candle = {
+                        "open":      float(row.get("open",   0) or 0),
+                        "high":      float(row.get("high",   0) or 0),
+                        "low":       float(row.get("low",    0) or 0),
+                        "close":     float(row.get("close",  0) or 0),
+                        "volume":    float(row.get("volume", 0) or 0),
+                        "timestamp": row.get("time"),
+                    }
+                    if candle["open"] > 0 and candle["close"] > 0:
+                        self._ohlcv_history[symbol].append(candle)
+                        count += 1
+                except (TypeError, ValueError):
+                    continue
+
+            self._candle_bootstrap_done.add(symbol)
+            logger.info("candle.bootstrap_complete symbol=%s closed_candles_loaded=%d", symbol, count)
+
+        except Exception as exc:
+            logger.warning("candle.bootstrap_failed symbol=%s error=%s — will retry next cycle", symbol, exc)
+
     def _on_ws_message(self, data: dict):
         """Handle incoming WebSocket messages."""
         msg_type = data.get("type")
@@ -141,17 +284,15 @@ class TradingEngine:
             price = self._extract_price(payload)
             if symbol and price > 0:
                 self._price_history[symbol].append(price)
-                
-                # Append to OHLCV buffer (Simulating candles from ticker for simplicity in this turn)
-                # In a real setup, we should subscribe to candles channel instead.
-                self._ohlcv_history[symbol].append({
-                    "open": price, "high": price, "low": price, "close": price, 
-                    "volume": float(payload.get("volume", 0)), 
-                    "timestamp": payload.get("timestamp")
-                })
-                # In a production bot, we might trigger strategy logic here 
-                # or in a separate loop that checks the latest data.
-        
+                # NOTE: ticker ticks are NOT appended to _ohlcv_history.
+                # Real OHLCV bars come from the candlestick_1m channel below.
+
+        elif msg_type == "candlestick_1m":
+            payload = data.get("payload", {})
+            symbol = payload.get("symbol")
+            if symbol:
+                self._process_candle_message(symbol, payload)
+
         elif msg_type == "executions":
             self._handle_execution_report(data)
 
@@ -172,10 +313,16 @@ class TradingEngine:
                     logger.error(f"Error fetching fallback price for {symbol}: {e}")
                     continue
 
+            # If the candle buffer is still empty (e.g., bootstrap failed or WS not yet
+            # delivering candles), attempt a one-shot REST re-bootstrap.
+            if not self._ohlcv_history[symbol] and symbol not in self._candle_bootstrap_done:
+                logger.info("candle.inline_rest_fallback symbol=%s", symbol)
+                self._bootstrap_candle_history(symbol)
+
             market_data[symbol] = {
-                "prices": history, 
+                "prices": history,
                 "ticker": {},
-                "df": pd.DataFrame(list(self._ohlcv_history[symbol])) if self._ohlcv_history[symbol] else None
+                "df": pd.DataFrame(list(self._ohlcv_history[symbol])) if self._ohlcv_history[symbol] else None,
             }
         return market_data
 
@@ -398,7 +545,14 @@ class TradingEngine:
     async def run(self, max_iterations: Optional[int] = None):
         logger.info("Starting trading engine in %s mode", self.settings.mode)
         await self.ws_manager.connect()
-        
+
+        # Seed OHLCV history from REST before the first strategy cycle.
+        # This ensures candle strategies have enough history immediately on startup
+        # without waiting for 100+ minutes of live WS candles to accumulate.
+        logger.info("Bootstrapping candle history from REST for %d symbol(s)", len(self.settings.trade_symbols))
+        for symbol in self.settings.trade_symbols:
+            self._bootstrap_candle_history(symbol)
+
         # Start Reconciliation background task
         recon_task = asyncio.create_task(self.reconciliation_service.start())
         

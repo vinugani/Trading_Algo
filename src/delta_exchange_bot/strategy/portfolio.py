@@ -7,9 +7,11 @@ from delta_exchange_bot.strategy.base import Signal, Strategy, CandleStrategy
 from delta_exchange_bot.strategy.ema_crossover import EMACrossoverStrategy
 from delta_exchange_bot.strategy.momentum import MomentumStrategy
 from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy, RSIScalpingCandleStrategy
-from delta_exchange_bot.strategy.market_regime import MarketRegimeSnapshot
+from delta_exchange_bot.strategy.market_regime import MarketRegimeSnapshot, MarketRegimeDetector
 from delta_exchange_bot.strategy.mean_reversion import MeanReversionStrategy
 from delta_exchange_bot.strategy.trend_following import TrendFollowingStrategy
+from delta_exchange_bot.strategy.vwap_deviation import VWAPDeviationStrategy
+from delta_exchange_bot.strategy.bollinger_squeeze import BollingerSqueezeStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -148,8 +150,9 @@ class CandlePortfolioStrategy(CandleStrategy):
     Aggregates signals from underlying candle strategies based on weights.
     """
 
+    name = "candle_portfolio"
+
     def __init__(self, sub_strategies: Optional[List[Tuple[CandleStrategy, float]]] = None):
-        super().__init__(name="Portfolio")
         if sub_strategies is not None:
             self.sub_strategies = sub_strategies
         else:
@@ -157,6 +160,8 @@ class CandlePortfolioStrategy(CandleStrategy):
                 (TrendFollowingStrategy(), 0.3),
                 (MeanReversionStrategy(), 0.3),
                 (RSIScalpingCandleStrategy(), 0.4),
+                (VWAPDeviationStrategy(), 0.3),
+                (BollingerSqueezeStrategy(), 0.25),
             ]
 
     def generate(
@@ -225,3 +230,57 @@ class CandlePortfolioStrategy(CandleStrategy):
             take_profit=take_profit,
             trailing_stop_pct=trailing_stop_pct,
         )
+
+
+class CandlePortfolioEngineAdapter:
+    """
+    Adapts CandlePortfolioStrategy to the engine's Strategy interface.
+
+    TradingEngine.generate() expects: generate(market_data: dict) -> list[Signal]
+    CandlePortfolioStrategy.generate() expects: generate(symbol, candles, regime) -> Signal
+
+    This adapter:
+    - Iterates over all symbols in market_data
+    - Detects market regime from the OHLCV DataFrame
+    - Calls CandlePortfolioStrategy per symbol
+    - Skips symbols whose candle data is synthetic (H=L=C — ticker-only data)
+    - Returns list[Signal] (hold signals excluded)
+    """
+
+    name = "candle_portfolio"
+
+    def __init__(self):
+        self._strategy = CandlePortfolioStrategy()
+        self._regime_detector = MarketRegimeDetector()
+
+    def generate(self, market_data: dict) -> List[Signal]:
+        signals: List[Signal] = []
+        for symbol, data in market_data.items():
+            candles = data.get("df")
+            if candles is None or not isinstance(candles, pd.DataFrame) or candles.empty:
+                continue
+
+            # C2 guard: reject synthetic OHLCV where every bar has H=L=C=O (ticker-only data).
+            # Real OHLCV bars have price range; synthetic bars have zero range.
+            # Skip and warn until a real candles WebSocket channel is wired up.
+            if (
+                "high" in candles.columns
+                and "low" in candles.columns
+                and (candles["high"] == candles["low"]).all()
+            ):
+                logger.warning(
+                    "Skipping %s: synthetic OHLCV detected (H=L for all bars). "
+                    "Subscribe to a real candles channel for VWAP/candle strategies.",
+                    symbol,
+                )
+                continue
+
+            try:
+                regime = self._regime_detector.detect(candles)
+                sig = self._strategy.generate(symbol=symbol, candles=candles, regime=regime)
+                if sig.action != "hold":
+                    signals.append(sig)
+            except Exception as exc:
+                logger.warning("CandlePortfolioEngineAdapter failed for %s: %s", symbol, exc)
+
+        return signals

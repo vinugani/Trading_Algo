@@ -12,3 +12,13 @@ delta:
 persistence:
   # Use a separate database for paper trading (e.g., trading_paper)
   postgres_dsn: "postgresql://postgres:admin1234@localhost:5432/trading_paper"
+
+strategy_params:
+  vwap_deviation:
+    deviation_pct: 0.5          # Fallback % threshold (used when z-score unavailable)
+    zscore_threshold: 1.5       # |z-score| required to trigger a signal
+    zscore_window: 20           # Rolling window for std of deviation series
+    sl_atr_multiplier: 1.5      # SL = max(sl_pct_floor * price, multiplier * ATR)
+    sl_pct_floor: 0.4           # Minimum SL as % of entry price
+    min_candles: 20             # Minimum bars before any signal
+    cooldown_bars: 5            # Minimum bars between consecutive signals per symbol
