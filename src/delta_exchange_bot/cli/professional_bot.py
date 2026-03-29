@@ -195,13 +195,42 @@ class ProfessionalTradingBot:
         self._open_positions = self._local_cache_positions
         self._recalculate_open_notional()
 
+    def _position_notional_usd(self, symbol: str, size_contracts: float, entry_price: float) -> float:
+        """Convert exchange-reported position size (in contracts) to USD notional.
+
+        Delta Exchange India reports positions in contracts, not in base-asset units.
+        For inverse perpetuals (BTCUSD, ETHUSD, SOLUSD) each contract = 1 USD of
+        exposure, so notional = size_contracts × contract_value_usd.
+        For linear/quanto contracts contract_value is in base asset, so
+        notional = size_contracts × contract_value_btc × price.
+        Falls back to size × price when product metadata is unavailable.
+        """
+        if size_contracts <= 0 or entry_price <= 0:
+            return 0.0
+        row = self.client._get_product_row(symbol)
+        if not isinstance(row, dict):
+            return size_contracts * entry_price
+        cv_raw = row.get("contract_value")
+        try:
+            cv = float(cv_raw) if cv_raw is not None else 0.0
+        except (TypeError, ValueError):
+            cv = 0.0
+        if cv <= 0:
+            return size_contracts * entry_price
+        contract_type = str(row.get("contract_type") or "").lower()
+        if "inverse" in contract_type:
+            # Inverse perp: contract_value is in USD → notional = contracts × USD/contract
+            return size_contracts * cv
+        # Linear/quanto: contract_value is in base asset → notional = contracts × base × price
+        return size_contracts * cv * entry_price
+
     def _recalculate_open_notional(self) -> None:
         by_symbol: dict[str, float] = defaultdict(float)
         total = 0.0
         for symbol, pos in self._open_positions.items():
             size = abs(float(pos.get("size", 0.0) or 0.0))
             entry = float(pos.get("entry_price", 0.0) or 0.0)
-            notion = size * entry
+            notion = self._position_notional_usd(symbol, size, entry)
             by_symbol[symbol] += notion
             total += notion
         self._open_notional_by_symbol = by_symbol
@@ -540,7 +569,7 @@ class ProfessionalTradingBot:
         # $106 account causes a $400+ loss on a 0.6% move, which immediately blows
         # through the 5% daily loss limit and fires the kill switch.
         if entry_price > 0 and self.account_equity > 0:
-            synced_notional = abs_size * entry_price
+            synced_notional = self._position_notional_usd(symbol_u, abs_size, entry_price)
             max_allowed_notional = self.account_equity * self.settings.max_leverage
             if synced_notional > max_allowed_notional:
                 logger.critical(
