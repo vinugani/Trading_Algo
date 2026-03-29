@@ -36,7 +36,7 @@ from delta_exchange_bot.strategy.base import Signal
 from delta_exchange_bot.strategy.ema_crossover import EMACrossoverStrategy
 from delta_exchange_bot.strategy.momentum import MomentumStrategy
 from delta_exchange_bot.strategy.rsi_scalping import RSIScalpingStrategy
-from delta_exchange_bot.strategy.portfolio import PortfolioStrategy
+from delta_exchange_bot.strategy.portfolio import PortfolioStrategy, CandlePortfolioEngineAdapter
 from delta_exchange_bot.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,7 @@ class ProfessionalTradingBot:
         self.metrics = PrometheusMetricsExporter()
         self.strategy_manager = StrategyManager()
         self.legacy_strategy = self._build_legacy_strategy(settings.strategy_name)
+        self.candle_portfolio_adapter = CandlePortfolioEngineAdapter()
 
         risk_config = AdvancedRiskConfig(
             max_risk_per_trade=settings.max_risk_per_trade,
@@ -1250,6 +1251,21 @@ class ProfessionalTradingBot:
 
     def generate_strategy_signal(self, symbol: str, candles: pd.DataFrame) -> tuple[Signal, str, str]:
         strategy_name = self.settings.strategy_name.lower()
+        if strategy_name == "candle_portfolio":
+            # Delegate to CandlePortfolioEngineAdapter (VWAP Deviation + Bollinger Squeeze +
+            # TrendFollowing + MeanReversion + RSIScalpingCandle, all with real OHLCV candles).
+            # Candles here come from REST fetch_candles() so H≠L≠C — no synthetic data.
+            market_data = {symbol: {"df": candles}}
+            signals = self.candle_portfolio_adapter.generate(market_data)
+            if signals:
+                sig = signals[0]
+                logger.debug(
+                    "[%s] CandlePortfolio output: action=%s confidence=%.4f",
+                    symbol, sig.action, float(sig.confidence),
+                )
+                return sig, "candle_portfolio", "candle_portfolio"
+            current_price = float(candles["close"].iloc[-1]) if not candles.empty else 0.0
+            return Signal(symbol=symbol, action="hold", confidence=0.0, price=current_price), "candle_portfolio", "candle_portfolio"
         if strategy_name == "portfolio":
             signal = self._generate_legacy_signal(symbol, candles)
             logger.debug(
@@ -2421,7 +2437,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=["paper", "live"], default="paper")
     parser.add_argument(
         "--strategy",
-        choices=["portfolio", "momentum", "rsi_scalping", "ema_crossover", "trend_following", "mean_reversion"],
+        choices=["candle_portfolio", "portfolio", "momentum", "rsi_scalping", "ema_crossover", "trend_following", "mean_reversion"],
         default="portfolio",
     )
     parser.add_argument("--cycles", type=int, default=None, help="Optional number of loop cycles")
