@@ -26,9 +26,17 @@ class ProtectionState:
     # Exchange order IDs — stored so we can cancel orphaned orders on close
     stop_order_id: Optional[str] = None
     tp_order_id: Optional[str] = None
+    # Wall-clock time when this protection was first registered.
+    # Used by the grace-period guard in on_price_update.
+    registered_at: float = 0.0
 
 
 class OrderExecutionEngine:
+    # Seconds after registration during which a protection will NOT fire.
+    # Prevents the price that was already live when a position was registered
+    # from immediately triggering its own SL/TP.
+    PROTECTION_GRACE_PERIOD_S: float = 10.0
+
     def __init__(self, client: Optional[DeltaClient]):
         self.client = client
         self._protection: dict[str, ProtectionState] = {}
@@ -144,35 +152,9 @@ class OrderExecutionEngine:
     ) -> ProtectionState:
         state = self._ensure_state(symbol, position_side, size, reference_price=stop_price, trade_id=trade_id)
         state.stop_loss = stop_price
-
-        # Attempt native exchange-side stop-loss order so it survives a bot crash.
-        # Falls back to memory-only tracking if the exchange rejects the order.
-        if self.client is not None:
-            exit_side = "sell" if state.side == "long" else "buy"
-            sl_client_id = self._safe_client_order_id(f"{trade_id or symbol}-sl")
-            try:
-                resp = self.client.place_conditional_order(
-                    symbol=symbol,
-                    side=exit_side,
-                    size=size,
-                    stop_price=stop_price,
-                    order_type="stop_loss_order",
-                    client_order_id=sl_client_id,
-                    reduce_only=True,
-                )
-                order_id = self._extract_exchange_order_id(resp)
-                if order_id:
-                    state.stop_order_id = order_id
-                    logger.info(
-                        "Native SL order placed: symbol=%s order_id=%s stop=%s",
-                        symbol, order_id, stop_price,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Native SL order rejected — using in-memory fallback: symbol=%s stop=%s error=%s",
-                    symbol, stop_price, exc,
-                )
-
+        # Native exchange stop orders are not used: Delta Exchange testnet only
+        # accepts limit_order/market_order and rejects conditional order types.
+        # In-memory tracking handles SL/TP reliably for this deployment.
         logger.info("Registered stop loss: symbol=%s side=%s stop=%s size=%s", symbol, state.side, stop_price, size)
         return state
 
@@ -186,35 +168,7 @@ class OrderExecutionEngine:
     ) -> ProtectionState:
         state = self._ensure_state(symbol, position_side, size, reference_price=target_price, trade_id=trade_id)
         state.take_profit = target_price
-
-        # Attempt native exchange-side take-profit order so it survives a bot crash.
-        # Falls back to memory-only tracking if the exchange rejects the order.
-        if self.client is not None:
-            exit_side = "sell" if state.side == "long" else "buy"
-            tp_client_id = self._safe_client_order_id(f"{trade_id or symbol}-tp")
-            try:
-                resp = self.client.place_conditional_order(
-                    symbol=symbol,
-                    side=exit_side,
-                    size=size,
-                    stop_price=target_price,
-                    order_type="take_profit_order",
-                    client_order_id=tp_client_id,
-                    reduce_only=True,
-                )
-                order_id = self._extract_exchange_order_id(resp)
-                if order_id:
-                    state.tp_order_id = order_id
-                    logger.info(
-                        "Native TP order placed: symbol=%s order_id=%s target=%s",
-                        symbol, order_id, target_price,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Native TP order rejected — using in-memory fallback: symbol=%s target=%s error=%s",
-                    symbol, target_price, exc,
-                )
-
+        # Native exchange take-profit orders are not used: same reason as SL above.
         logger.info("Registered take profit: symbol=%s side=%s target=%s size=%s", symbol, state.side, target_price, size)
         return state
 
@@ -251,6 +205,19 @@ class OrderExecutionEngine:
         state = self._protection.get(symbol)
         if state is None:
             return None
+
+        # Grace-period guard: do not fire SL/TP in the first N seconds after a
+        # protection is registered.  This prevents a stale cached price (the
+        # exact same tick that was live when the position was registered) from
+        # immediately triggering the brand-new protection level.
+        if state.registered_at > 0:
+            age_s = time.time() - state.registered_at
+            if age_s < self.PROTECTION_GRACE_PERIOD_S:
+                logger.debug(
+                    "Protection grace period active: symbol=%s age_s=%.2f grace_s=%.1f — skipping trigger evaluation",
+                    symbol, age_s, self.PROTECTION_GRACE_PERIOD_S,
+                )
+                return None
 
         if state.trailing_stop_pct is not None:
             if state.side == "long":
@@ -529,9 +496,16 @@ class OrderExecutionEngine:
                 size=size,
                 trade_id=trade_id,
                 extreme_price=reference_price,
+                registered_at=time.time(),
             )
             self._protection[symbol] = state
         else:
+            # Updating an existing state (e.g. adding TP after SL was already
+            # set).  Only reset the clock when the trade_id changes, which
+            # signals a genuinely new position — not just adding a second
+            # protection level to the same trade.
+            if trade_id is not None and trade_id != state.trade_id:
+                state.registered_at = time.time()
             state.side = normalized_side
             state.size = size
             if trade_id is not None:

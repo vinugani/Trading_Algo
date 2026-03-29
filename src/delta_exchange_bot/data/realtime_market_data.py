@@ -194,7 +194,13 @@ class RealtimeMarketDataService:
                 with self._state_lock:
                     if not self._ws_connected or self._last_message_monotonic <= 0:
                         continue
-                    age_s = time.monotonic() - self._last_message_monotonic
+                    # Consider pong responses as evidence of a live connection.
+                    # Without this, the watchdog fires every ~60s even when
+                    # ping/pong frames are keeping the socket alive, because
+                    # _on_pong updates _last_pong_monotonic but not
+                    # _last_message_monotonic.
+                    last_activity = max(self._last_message_monotonic, self._last_pong_monotonic)
+                    age_s = time.monotonic() - last_activity
                 if age_s <= self.stale_after_s:
                     continue
                 if self._request_reconnect(

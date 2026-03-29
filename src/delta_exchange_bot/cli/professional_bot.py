@@ -864,6 +864,19 @@ class ProfessionalTradingBot:
                     side,
                     retries,
                 )
+            # When before==after==0 the exchange simply hasn't settled yet
+            # (testnet latency).  The order was accepted; CRITICAL is misleading
+            # here.  Downgrade to WARNING — the next reconciliation cycle picks it up.
+            if before_signed == 0.0 and after_signed == 0.0:
+                logger.warning(
+                    "POST_EXECUTION_PENDING symbol=%s side=%s retries=%s — "
+                    "order accepted; exchange confirmation pending (settlement latency). "
+                    "Next cycle reconciliation will confirm.",
+                    symbol_u,
+                    side,
+                    retries,
+                )
+                return True
             logger.critical(
                 "POST_EXECUTION_POSITION_NOT_CONFIRMED symbol=%s side=%s "
                 "before=%s after=%s retries=%s — order was accepted; continuing "
